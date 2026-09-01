@@ -48,6 +48,25 @@ they show you text the app will never see, and a regex tuned against them will
 be wrong in production. `node tests/run.mjs` runs everything through real
 headless Chromium for this reason.
 
+### Never put a `<button>` inside a picker `<label>`
+
+All four file pickers are a `<label>` wrapping a hidden `<input type="file">`.
+A label with no `for` binds to the **first labelable descendant in tree
+order** — and `<button>` is labelable. Put a button inside one and it silently
+becomes the label's control, so every tap on the box activates the button and
+the file dialog never opens. No error, no console warning; the box is simply
+dead.
+
+This shipped once, in the photo pickers' Remove button. The fix has two
+independent guards: the Remove button is a positioned **sibling** of the label,
+and the file input is the **first** child inside it. `tests/run.mjs` asserts
+both — that each label's `.control` is its own input, and that clicking each
+picker really does open a file chooser.
+
+The general lesson for this repo: a test that pokes state directly
+(`input.files = …`) proves the handler works, not that a human can reach it.
+Anything a technician taps needs a test that taps it.
+
 ### Report rules that are deliberate
 
 | Metric | Direction | Notes |

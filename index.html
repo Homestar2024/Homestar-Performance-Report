@@ -85,16 +85,19 @@
   /* ---------- Photo pickers ---------- */
   .photos{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px}
   @media(max-width:640px){.photos{grid-template-columns:1fr}}
-  .pdrop{border:1.5px dashed var(--line); border-radius:11px; padding:14px; text-align:center; cursor:pointer; background:#FBFCFD; transition:border-color .15s,background .15s}
+  .pwrap{position:relative}
+  .pdrop{display:block; border:1.5px dashed var(--line); border-radius:11px; padding:14px; text-align:center; cursor:pointer; background:#FBFCFD; transition:border-color .15s,background .15s}
   .pdrop:hover{border-color:var(--blue); background:#F5F9FD}
   .pdrop.set{border-style:solid; border-color:var(--line); background:#fff; padding:10px}
-  .pdrop .tag{font-size:11px; font-weight:700; letter-spacing:.06em; color:var(--faint); text-transform:uppercase}
-  .pdrop .sub{font-size:12px; color:var(--slate); margin-top:5px}
+  .pdrop .tag{font-size:11px; font-weight:700; letter-spacing:.06em; color:var(--faint); text-transform:uppercase; padding:0 60px}
+  .pdrop .sub{font-size:12px; color:var(--slate); margin-top:5px; word-break:break-word}
   .pdrop img{display:none; width:100%; height:110px; object-fit:contain; background:var(--line2); border-radius:7px; margin-top:8px}
   .pdrop.set img{display:block}
-  .prow{display:flex; justify-content:space-between; align-items:center; gap:10px}
-  .plink{border:0; background:none; padding:0; font-family:inherit; font-size:12px; font-weight:650; color:var(--slate); cursor:pointer; text-decoration:underline; display:none}
-  .pdrop.set .plink{display:inline}
+  /* Deliberately a sibling of the label, never a child. <button> is a labelable
+     element, so a button inside the label becomes the label's control and
+     swallows every tap that should have opened the file picker. */
+  .plink{position:absolute; top:5px; right:6px; z-index:1; display:none; border:0; background:none; padding:7px 9px; font-family:inherit; font-size:12px; font-weight:650; color:var(--slate); cursor:pointer; text-decoration:underline}
+  .pdrop.set + .plink{display:inline-block}
   .plink:hover{color:var(--bad)}
 
   /* ---------- Report ---------- */
@@ -289,24 +292,24 @@
       </label>
     </div>
     <div class="photos">
-      <label class="pdrop" id="p1">
-        <div class="prow">
-          <span class="tag">Before photo (optional)</span>
-          <button class="plink" type="button" data-clear="1">Remove</button>
-        </div>
-        <div class="sub" id="pn1">Tap to choose a photo</div>
-        <img id="pi1" alt="">
-        <input type="file" accept="image/*" hidden id="pf1">
-      </label>
-      <label class="pdrop" id="p2">
-        <div class="prow">
-          <span class="tag">After photo (optional)</span>
-          <button class="plink" type="button" data-clear="2">Remove</button>
-        </div>
-        <div class="sub" id="pn2">Tap to choose a photo</div>
-        <img id="pi2" alt="">
-        <input type="file" accept="image/*" hidden id="pf2">
-      </label>
+      <div class="pwrap">
+        <label class="pdrop" id="p1">
+          <input type="file" accept="image/*" hidden id="pf1">
+          <div class="tag">Before photo (optional)</div>
+          <div class="sub" id="pn1">Tap to choose a photo</div>
+          <img id="pi1" alt="">
+        </label>
+        <button class="plink" type="button" id="px1" data-clear="1">Remove</button>
+      </div>
+      <div class="pwrap">
+        <label class="pdrop" id="p2">
+          <input type="file" accept="image/*" hidden id="pf2">
+          <div class="tag">After photo (optional)</div>
+          <div class="sub" id="pn2">Tap to choose a photo</div>
+          <img id="pi2" alt="">
+        </label>
+        <button class="plink" type="button" id="px2" data-clear="2">Remove</button>
+      </div>
     </div>
 
     <div class="fields">

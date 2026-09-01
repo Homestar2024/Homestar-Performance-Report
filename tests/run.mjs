@@ -393,6 +393,71 @@ test('a metric with a missing value claims nothing', async ({ browser, origin })
   await page.close();
 });
 
+/* ----------------------------------------------------- the pickers open */
+
+/* Every picker is a <label> wrapping a hidden file input. If anything else
+   labelable (a <button>, say) ends up inside that label, it silently becomes
+   the label's control and swallows the tap — the box goes dead with no error.
+   That shipped once; these tests exist so it cannot ship again. */
+
+test('each picker label is wired to its own file input', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  const wiring = await page.evaluate(() =>
+    ['d1', 'd2', 'p1', 'p2'].map(id => {
+      const c = document.getElementById(id).control;
+      return [id, c ? c.id + ':' + c.tagName.toLowerCase() : 'none'];
+    }));
+  eq(wiring, [['d1', 'f1:input'], ['d2', 'f2:input'], ['p1', 'pf1:input'], ['p2', 'pf2:input']], 'label controls');
+  await page.close();
+});
+
+test('tapping any of the four pickers opens a file chooser', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  for (const id of ['d1', 'd2', 'p1', 'p2']) {
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null),
+      page.click('#' + id, { position: { x: 30, y: 30 } }),
+    ]);
+    ok(chooser, `#${id} did not open a file chooser`);
+  }
+  await page.close();
+});
+
+test('the photo pickers accept images and do not force the camera', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  // `capture` would send Android straight to the camera, blocking gallery picks.
+  eq(await page.$$eval('#pf1, #pf2', els => els.map(e => [e.accept, e.hasAttribute('capture')])),
+    [['image/*', false], ['image/*', false]], 'accept / capture');
+  await page.close();
+});
+
+test('Remove sits outside the label and does not open a chooser', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await attachPhoto(page, 1);
+  ok(await page.evaluate(() => !document.getElementById('p1').contains(document.getElementById('px1'))),
+    'the button must not be a descendant of the label');
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 2000 }).catch(() => null),
+    page.click('#px1'),
+  ]);
+  ok(!chooser, 'Remove opened a file chooser');
+  eq(await page.evaluate(() => photos[1]), null, 'photo cleared');
+  await page.close();
+});
+
+test('the picker still opens after a photo has been chosen', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await attachPhoto(page, 1);
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null),
+    page.click('#p1', { position: { x: 30, y: 70 } }),   // over the thumbnail
+    ]);
+  ok(chooser, 'replacing a chosen photo must still be possible');
+  await page.close();
+});
+
 /* ------------------------------------------------------ photos (page two) */
 
 test('both photos render in labelled before/after frames', async ({ browser, origin }) => {
@@ -454,7 +519,7 @@ test('removing a photo takes it out of the report', async ({ browser, origin }) 
   await upload(page, 1, before);
   await upload(page, 2, after);
   await attachPhoto(page, 1);
-  await page.click('#p1 .plink');
+  await page.click('#px1');
   eq(await page.evaluate(() => photos[1]), null, 'cleared');
   ok(!(await page.$eval('#p1', e => e.classList.contains('set'))), 'picker reset');
   await page.click('#gen');
