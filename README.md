@@ -144,13 +144,51 @@ Anything a technician taps needs a test that taps it.
 
 ### Report rules that are deliberate
 
-| Metric | Direction | Notes |
-| --- | --- | --- |
-| Total Airflow (SCFM) | up is good | |
-| Total External Static Pressure | down is good | |
-| Return Plenum | down is good | |
-| Filter Drop | down is good | |
-| Supply Plenum | down is good | **a rise is amber, not red** — supply static naturally rises with airflow, and must never be presented as a failure |
+There are two kinds of metric here, and conflating them produced the worst bug
+this report has had.
+
+**Verdicts** — judged on their own, and the only ones that can come back red:
+
+| Metric | Direction |
+| --- | --- |
+| Total Airflow (SCFM) | up is good |
+| Total External Static Pressure | down is good |
+
+Those two *are* the job. The purpose of these upgrades is to move more air
+against less resistance; everything else is a component of that outcome.
+
+**Component pressures** — Return Plenum, Filter Drop, Supply Plenum. Marked
+`context: true` in `METRICS`, and **never shown as a failure**.
+
+Pressure drop across any path rises with the air travelling through it. So a
+duct upgrade that clears a restriction and adds 21% airflow can push all three
+*up* while the system gets materially better. A real job: airflow +21.2%, total
+external static −58.8%, return plenum +2.7%, supply plenum +142.9%. Under the
+old "lower is better" rule the return plenum was flagged red as "moved the
+wrong direction — worth a look" and the write-up told the homeowner "something
+on the return path is restricting more than it was". That was not merely
+alarming, it was **wrong**: a path carrying 21% more air for 2.7% more pressure
+got substantially less restrictive.
+
+How they are scored now (`statusOf`, when passed the system context):
+
+- fell → green;
+- rose by proportionally **less than airflow** → green, because it is carrying
+  more air for less pressure per unit of flow;
+- otherwise → **neutral**, never red or amber.
+
+The write-ups follow the same four readings — fell / beat the airflow / rose
+anyway / the job missed its goals — and the last of those stays factual and
+claims nothing.
+
+**This does not make the report incapable of bad news.** Airflow and TESP still
+go red, still say "Airflow decreased — worth investigating" and "the blower is
+working harder", and there is a test asserting exactly that on a job that
+missed. Honesty lives in the two metrics that carry the verdict; the components
+stopped pretending to be verdicts.
+
+Do not "fix" a component metric back to plain lower-is-better. Tests will fail,
+and so will the physics.
 
 SCFM/ton and the System & Conditions section were removed on purpose. Don't add
 them back.
@@ -180,10 +218,11 @@ Two tiers:
 Nothing renders for a metric that did not move, or that is missing a before or
 after value. The report never claims a benefit it cannot show a number for.
 
-Keep the copy technically honest. Two traps worth knowing: more airflow does
+Keep the copy technically honest. Three traps worth knowing: more airflow does
 **not** improve dehumidification (it raises the sensible heat ratio — if
-anything it does the opposite), and restored airflow returns a system to its
-*rated* capacity, it does not exceed it.
+anything it does the opposite); restored airflow returns a system to its
+*rated* capacity, it does not exceed it; and a component pressure rising is not
+evidence of a restriction when airflow rose with it.
 
 ### Photographs
 
@@ -214,9 +253,9 @@ not an eyeball:
 node tests/print-check.mjs
 ```
 
-It runs six content shapes — no photos, portrait photos, every metric moved the
-wrong way (the longest copy), long client name — and fails if any of them is
-not exactly two pages.
+It runs seven content shapes — no photos, portrait photos, every metric moved
+the wrong way, the real job where all three components rose (their longest
+write-ups), long client name — and fails if any is not exactly two pages.
 
 Note this only constrains the **report**. The uploader, photo pickers and the
 Confirm & correct panel are hidden when printing, so they cost nothing on

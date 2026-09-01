@@ -171,8 +171,10 @@
   .hbig .pct{font-size:30px; font-weight:800; letter-spacing:-.02em; font-variant-numeric:tabular-nums}
   .hbig .ar{font-size:20px; font-weight:800}
   .g .pct,.g .ar{color:var(--good)} .w .pct,.w .ar{color:var(--warn)} .b .pct,.b .ar{color:var(--bad)}
+  .n .pct,.n .ar{color:var(--slate)}
   .verdict{margin-top:5px; font-size:12px; font-weight:650}
   .g .verdict{color:var(--good)} .w .verdict{color:var(--warn)} .b .verdict{color:var(--bad)}
+  .n .verdict{color:var(--slate)}
 
   /* conditions / measurements two-col */
   .two{display:grid; grid-template-columns:1fr 1fr; gap:14px}
@@ -196,12 +198,14 @@
   .mbadge.g{color:var(--good); background:var(--good-bg); border-color:var(--good-ln)}
   .mbadge.w{color:var(--warn); background:var(--warn-bg); border-color:var(--warn-ln)}
   .mbadge.b{color:var(--bad); background:var(--bad-bg); border-color:var(--bad-ln)}
+  .mbadge.n{color:var(--slate); background:#EFF3F6; border-color:#D9E1E8}
   .bars{display:grid; grid-template-columns:52px 1fr 74px; gap:8px 12px; align-items:center}
   .bl{font-size:11px; font-weight:700; letter-spacing:.04em; color:var(--faint); text-transform:uppercase}
   .track{height:20px; background:var(--line2); border-radius:5px; overflow:hidden}
   .fill{height:100%; border-radius:5px; transition:width .6s cubic-bezier(.2,.7,.2,1)}
   .fill.base{background:#B9C6D1}
   .fill.g{background:var(--good)} .fill.w{background:var(--warn)} .fill.b{background:var(--bad)}
+  .fill.n{background:var(--slate)}
   .bv{font-size:13px; font-weight:700; text-align:right; font-variant-numeric:tabular-nums}
   .mnote{font-size:12px; color:var(--slate); margin-top:9px; padding-left:2px}
 
@@ -211,14 +215,16 @@
   .ben .bl2{font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--faint)}
   .ben .bl2 .d{font-weight:800; margin-left:6px; font-variant-numeric:tabular-nums}
   .ben.g .bl2 .d{color:var(--good)} .ben.w .bl2 .d{color:var(--warn)} .ben.b .bl2 .d{color:var(--bad)}
+  .ben.n .bl2 .d{color:var(--slate)}
   .ben h4{font-size:15px; margin:4px 0 5px; letter-spacing:-.01em; font-weight:750}
   .ben p{margin:0; font-size:12.5px; color:var(--slate); line-height:1.5; max-width:78ch}
   .bcomp{margin-top:14px; border:1px solid var(--line); border-radius:11px; padding:4px 14px}
   .bcomp .row{display:flex; gap:12px; padding:9px 0; border-bottom:1px solid var(--line2); font-size:12.5px; line-height:1.45}
   .bcomp .row:last-child{border-bottom:0}
-  .bcomp .rk{flex:0 0 142px; font-weight:700; color:var(--ink)}
+  .bcomp .rk{flex:0 0 158px; font-weight:700; color:var(--ink)}
   .bcomp .rk .d{font-weight:800; font-variant-numeric:tabular-nums; margin-left:5px}
   .bcomp .row.g .rk .d{color:var(--good)} .bcomp .row.w .rk .d{color:var(--warn)} .bcomp .row.b .rk .d{color:var(--bad)}
+  .bcomp .row.n .rk .d{color:var(--slate)}
   .bcomp .rv{color:var(--slate)}
 
   /* before/after photographs */
@@ -295,7 +301,7 @@
     .ben .bl2{font-size:10px}
     .bcomp{margin-top:10px; padding:2px 12px}
     .bcomp .row{padding:6px 0; font-size:11px; line-height:1.4}
-    .bcomp .rk{flex-basis:128px}
+    .bcomp .rk{flex-basis:150px}
     .shot .pt{padding:5px 13px; font-size:10px}
     .shot img{height:320px}
 
@@ -426,9 +432,14 @@ let jobSaved = false;     // this job has been printed or saved; the next upload
 const METRICS = [
   {key:'totalFlow',    name:'Total Airflow',                    unit:'SCFM',       dir:'up',   dp:0},
   {key:'tesp',         name:'Total External Static Pressure',   unit:'in H₂O',     dir:'down', dp:3},
-  {key:'returnPlenum', name:'Return Plenum',                    unit:'in H₂O',     dir:'down', dp:3},
-  {key:'filterDrop',   name:'Filter Drop',                      unit:'in H₂O',     dir:'down', dp:3},
-  {key:'supplyPlenum', name:'Supply Plenum',                    unit:'in H₂O',     dir:'down', dp:3, upOk:true},
+  // Component pressures. These are NOT verdicts on their own: pressure drop
+  // across any path rises with the air moving through it, so a duct upgrade
+  // that adds airflow can raise all three while the system as a whole gets
+  // materially better. They are scored against what the system achieved
+  // (see statusOf) and are never shown as a failure.
+  {key:'returnPlenum', name:'Return Plenum',                    unit:'in H₂O',     dir:'down', dp:3, context:true},
+  {key:'filterDrop',   name:'Filter Drop',                      unit:'in H₂O',     dir:'down', dp:3, context:true},
+  {key:'supplyPlenum', name:'Supply Plenum',                    unit:'in H₂O',     dir:'down', dp:3, context:true},
 ];
 
 /* Everything the report can show, in the order it reads best on screen.
@@ -773,30 +784,72 @@ setStatus();
 const fmt = (v,dp)=> v==null ? '—' : Number(v).toLocaleString('en-CA',{minimumFractionDigits:dp,maximumFractionDigits:dp});
 const esc = s => (s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
-function statusOf(m, before, after){
-  if (before==null || after==null) return {cls:'', arrow:'', pct:null, dir:0};
+/**
+ * What the job actually achieved. Airflow up and total external static down is
+ * the whole point of these upgrades; everything else is a component of that
+ * result, not a verdict of its own.
+ */
+function systemContext(before, after){
+  const flow = statusOf(METRICS[0], before.totalFlow, after.totalFlow);
+  const tesp = statusOf(METRICS[1], before.tesp, after.tesp);
+  return {
+    flowUp:   flow.dir > 0,
+    flowPct:  flow.pct,
+    tespDown: tesp.dir < 0,
+    tespPct:  tesp.pct,
+    improved: flow.dir > 0 && tesp.dir < 0,
+  };
+}
+
+/**
+ * @param {object} [sys] system context, required to score a context metric.
+ *
+ * Airflow and TESP are judged on their own and can come back red — the report
+ * has to be able to say a job did not achieve what it set out to.
+ *
+ * The component pressures never do. Pressure drop across a path rises with the
+ * air travelling through it, so a return plenum up 3% while airflow is up 21%
+ * is a path carrying far more air for almost no extra pressure: an improvement
+ * that a naive "lower is better" reading calls a failure. They score green when
+ * they fell, or rose by proportionally less than airflow; otherwise neutral.
+ */
+function statusOf(m, before, after, sys){
+  if (before==null || after==null) return {cls:'', arrow:'', pct:null, dir:0, beatsFlow:false};
   const d = after - before;
   const pct = before!==0 ? (d/before*100) : null;
   const arrow = d>0?'↑':(d<0?'↓':'→');
+  const dir = Math.sign(d);
+
+  // Rose, but by proportionally less than the extra air it is now moving.
+  const beatsFlow = !!(sys && sys.flowUp && d > 0 && pct != null && sys.flowPct != null
+    && Math.abs(pct) < Math.abs(sys.flowPct));
+
   let cls;
-  const improved = (m.dir==='up' && d>0) || (m.dir==='down' && d<0);
-  if (Math.abs(d)<1e-9) cls='';
-  else if (improved) cls='g';
-  else if (m.upOk && m.dir==='down' && d>0) cls='w';
-  else cls='b';
-  return {cls, arrow, pct, dir:Math.sign(d), d};
+  if (Math.abs(d) < 1e-9) cls = '';
+  else if (m.context){
+    cls = (d < 0 || (sys && sys.improved && beatsFlow)) ? 'g' : 'n';
+  } else {
+    const improved = (m.dir==='up' && d>0) || (m.dir==='down' && d<0);
+    cls = improved ? 'g' : 'b';
+  }
+  return {cls, arrow, pct, dir, d, beatsFlow};
 }
 
-function railFor(m, before, after){
-  const st = statusOf(m, before, after);
+function railFor(m, before, after, sys){
+  const st = statusOf(m, before, after, sys);
   const max = Math.max(before||0, after||0) || 1;
   const wB = ((before||0)/max*100).toFixed(1);
   const wA = ((after||0)/max*100).toFixed(1);
   const badge = st.arrow==='' ? '' :
     `<span class="mbadge ${st.cls}">${st.arrow} ${st.pct==null ? fmt(Math.abs(st.d), m.dp) : Math.abs(st.pct).toFixed(1)+'%'}</span>`;
   let note = '';
-  if (st.cls==='g') note = `Improved — ${m.dir==='up'?'higher is better here':'lower is better here'}.`;
-  else if (st.cls==='w') note = `Rose with the higher airflow. Expected when total flow increases; within acceptable range.`;
+  if (m.context){
+    if (st.cls==='g') note = st.beatsFlow
+      ? `Rose by proportionally less than the extra airflow — this path is carrying more air at nearly the same pressure.`
+      : `Down while the system moves more air.`;
+    else if (st.cls==='n') note = `A component pressure, not a verdict — it moves with the airflow through it. Total airflow and total external static are what judge the system.`;
+  }
+  else if (st.cls==='g') note = `Improved — ${m.dir==='up'?'higher is better here':'lower is better here'}.`;
   else if (st.cls==='b') note = `Moved the wrong direction — worth a look.`;
   return `
     <div class="metric">
@@ -816,9 +869,13 @@ function railFor(m, before, after){
     </div>`;
 }
 
-function heroCell(m, before, after){
-  const st = statusOf(m, before, after);
-  const verdict = st.cls==='g'?'Improved':(st.cls==='w'?'Acceptable':(st.cls==='b'?'Review':'No change'));
+function heroCell(m, before, after, sys){
+  const st = statusOf(m, before, after, sys);
+  let verdict;
+  if (st.cls === 'g') verdict = 'Improved';
+  else if (st.cls === 'b') verdict = 'Review';
+  else if (st.cls === 'n') verdict = (sys && sys.flowUp) ? 'As expected' : 'For reference';
+  else verdict = 'No change';
   return `
     <div class="hcell ${st.cls}">
       <div class="hl">${m.name}</div>
@@ -867,44 +924,77 @@ const BENEFITS = {
       body: `Total external static climbed ${c.pct} (${c.b} → ${c.a} in H₂O). Higher resistance means the blower draws more power, runs louder, and works harder for every cubic foot it delivers. Most residential equipment is rated to around 0.5 in H₂O, so what is driving this up is worth reviewing.`,
     }),
   },
+  /* The three component pressures. Which way they moved is not the story —
+     what the system achieved is. Each has four readings:
+
+       fell        pressure down while the system moves more air
+       beatsFlow   rose, but by proportionally less than the extra airflow
+       rose        rose by more than airflow alone accounts for
+       (fallback)  the job did not achieve both goals; stay factual
+
+     None of them is written as a failure. The honest verdict on a job lives in
+     Total Airflow and Total External Static Pressure above, which can and do
+     come back red. */
   returnPlenum: {
     tier: 2,
-    down: c => `Down ${c.pct}. The return side is where most duct restriction hides — with less of it the blower is not pulling against a choke point, returns run quieter, and there is less suction drawing unconditioned air in through any leaks.`,
-    up: c => `Up ${c.pct}. Something on the return path is restricting more than it was — filter, grilles or return duct sizing are the usual causes, and worth confirming.`,
+    line: (c, sys) => {
+      if (!sys.improved) return `${c.dirWord} ${c.pct}. Return-side static is one component of what the blower works against — it is read alongside total airflow and total external static above, which are what judge the system.`;
+      if (c.fell) return `Down ${c.pct} while the system moves ${c.flow} more air. Less pressure on the return side and more air travelling through it means the blower is drawing easier than it was — quieter returns, and less suction pulling unconditioned air in through any leaks on that side.`;
+      if (c.beatsFlow) return `Up ${c.pct}, against ${c.flow} more airflow. Moving that much extra air through a return normally costs a good deal more pressure than this, so the return path is carrying considerably more air at nearly the same static. That is the return side improving, not restricting.`;
+      return `Up ${c.pct} with ${c.flow} more air travelling through it. Static on the return side climbs with the air passing through — this is the airflow gain showing up, not a restriction. The measure of the system as a whole is total external static, which fell ${c.tesp}.`;
+    },
   },
   filterDrop: {
     tier: 2,
-    down: c => `Down ${c.pct}. The filter is no longer the bottleneck, so more of the available airflow goes to conditioning the house, and the filter can load up between changes without strangling the system.`,
-    up: c => `Up ${c.pct}. This is normal when filtration is upgraded — finer media captures more, and costs some static pressure to do it. A fair trade, as long as total external static stays inside the equipment's rating.`,
+    line: (c, sys) => {
+      if (!sys.improved) return `${c.dirWord} ${c.pct}. Drop across the filter is one component of the total the blower works against — it is read alongside total airflow and total external static above.`;
+      if (c.fell) return `Down ${c.pct} while airflow is up ${c.flow}. The filter is no longer the bottleneck: more of the system's capacity goes into conditioning the house, and the filter can load up between changes without strangling the system.`;
+      if (c.beatsFlow) return `Up ${c.pct}, against ${c.flow} more airflow. Pushing that much more air through a filter normally costs far more than this — it is passing considerably more air at nearly the same pressure drop as before.`;
+      return `Up ${c.pct} with ${c.flow} more air moving through it. Pressure drop across a filter rises with the air passing through it, and finer media rises faster — expected here, and comfortably paid for by a total external static that fell ${c.tesp}.`;
+    },
   },
   supplyPlenum: {
     tier: 2,
-    up: c => `Up ${c.pct}, which is expected: pushing more air through the same supply ducts raises the pressure on that side. It is a consequence of the airflow gain, not a fault — total external static is the number that judges the system as a whole.`,
-    down: c => `Down ${c.pct}. Less pressure on the supply side means quieter registers, and less force driving conditioned air out through any leaks in the supply ducts.`,
+    line: (c, sys) => {
+      if (!sys.improved) return `${c.dirWord} ${c.pct}. Supply-side static is one component of the total the blower works against — it is read alongside total airflow and total external static above.`;
+      if (c.fell) return `Down ${c.pct} while airflow is up ${c.flow} — less pressure on the supply side and more air out of the registers. Quieter registers, and less force driving conditioned air out through any leaks in the supply ducts.`;
+      if (c.beatsFlow) return `Up ${c.pct}, against ${c.flow} more airflow — less than moving that much extra air through the same supply ducts normally costs, and a small price for the air it buys.`;
+      return `Up ${c.pct} while the system moves ${c.flow} more air and the total the blower works against fell ${c.tesp}. Supply-side static rises when more air is pushed through the same ducts, and with the restriction cleared it now carries a larger share of a much smaller total. It is one component of the result, not the result.`;
+    },
   },
 };
 
-function benefitCtx(m, b, a, st){
+const pctText = v => v == null ? null : `${Math.abs(v).toFixed(1).replace(/\.0$/,'')}%`;
+
+function benefitCtx(m, b, a, st, sys){
   return {
-    pct: st.pct==null ? `by ${fmt(Math.abs(st.d), m.dp)} ${m.unit}` : `${Math.abs(st.pct).toFixed(0)}%`,
+    pct: st.pct==null ? `by ${fmt(Math.abs(st.d), m.dp)} ${m.unit}` : pctText(st.pct),
     b: fmt(b, m.dp),
     a: fmt(a, m.dp),
+    dirWord: st.dir > 0 ? 'Up' : 'Down',
+    fell: st.dir < 0,
+    beatsFlow: st.beatsFlow,
+    flow: pctText(sys.flowPct) || 'more',
+    tesp: pctText(sys.tespPct) || '',
   };
 }
 
-function benefitsFor(before, after){
+function benefitsFor(before, after, sys){
   const full = [], compact = [];
   for (const m of METRICS){
     const spec = BENEFITS[m.key];
     const b = before[m.key], a = after[m.key];
     if (!spec || b==null || a==null) continue;
-    const st = statusOf(m, b, a);
-    const pick = st.dir > 0 ? spec.up : (st.dir < 0 ? spec.down : null);
-    if (!pick) continue;                       // no movement, nothing to claim
-    const c = benefitCtx(m, b, a, st);
-    const delta = `${st.arrow} ${st.pct==null ? fmt(Math.abs(st.d), m.dp) : Math.abs(st.pct).toFixed(0)+'%'}`;
+    const st = statusOf(m, b, a, sys);
+    if (st.dir === 0) continue;                // no movement, nothing to claim
+    const pick = spec.line || (st.dir > 0 ? spec.up : spec.down);
+    if (!pick) continue;
+    const c = benefitCtx(m, b, a, st, sys);
+    // Same precision as the prose beside it — "↑ 3%" next to "Up 2.7%" reads
+    // like two different measurements.
+    const delta = `${st.arrow} ${st.pct==null ? fmt(Math.abs(st.d), m.dp) : pctText(st.pct)}`;
     if (spec.tier === 1){
-      const {head, body} = pick(c);
+      const {head, body} = pick(c, sys);
       full.push(`<div class="ben ${st.cls}">
         <div class="bl2">${m.name}<span class="d">${delta}</span></div>
         <h4>${head}</h4>
@@ -913,7 +1003,7 @@ function benefitsFor(before, after){
     } else {
       compact.push(`<div class="row ${st.cls}">
         <div class="rk">${m.name}<span class="d">${delta}</span></div>
-        <div class="rv">${pick(c)}</div>
+        <div class="rv">${pick(c, sys)}</div>
       </div>`);
     }
   }
@@ -939,14 +1029,16 @@ function buildReport(before, after){
   const phone = after.phone || before.phone || '';
   const email = after.email || before.email || '';
 
-  const hero = ['totalFlow','tesp','filterDrop']
-    .map(k=>{const m=METRICS.find(x=>x.key===k); return heroCell(m, before[k], after[k]);}).join('');
+  const sys = systemContext(before, after);
 
-  const rails = METRICS.map(m=>railFor(m, before[m.key], after[m.key])).join('');
+  const hero = ['totalFlow','tesp','filterDrop']
+    .map(k=>{const m=METRICS.find(x=>x.key===k); return heroCell(m, before[k], after[k], sys);}).join('');
+
+  const rails = METRICS.map(m=>railFor(m, before[m.key], after[m.key], sys)).join('');
 
   // Page two. Whichever of these exists comes first carries the page break.
   const page2 = [];
-  const benefits = benefitsFor(before, after);
+  const benefits = benefitsFor(before, after, sys);
   const shots = shotsFor();
   if (benefits) page2.push(`<section><div class="sh">What This Means For Your Home</div>${benefits}</section>`);
   if (shots) page2.push(`<section><div class="sh">Before &amp; After</div>${shots}</section>`);

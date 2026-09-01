@@ -33,8 +33,24 @@ const WRONG_WAY = {
   '#rvrows input[data-key="supplyPlenum"][data-pos="a"]': '0.500',
 };
 
+// The job that drove the component-pressure rewrite: every one of the three
+// gets its longest write-up, because none of them simply fell.
+const REAL = {
+  '#rvrows input[data-key="totalFlow"][data-pos="b"]': '850',
+  '#rvrows input[data-key="totalFlow"][data-pos="a"]': '1030',
+  '#rvrows input[data-key="tesp"][data-pos="b"]': '0.850',
+  '#rvrows input[data-key="tesp"][data-pos="a"]': '0.350',
+  '#rvrows input[data-key="returnPlenum"][data-pos="b"]': '0.370',
+  '#rvrows input[data-key="returnPlenum"][data-pos="a"]': '0.380',
+  '#rvrows input[data-key="filterDrop"][data-pos="b"]': '0.120',
+  '#rvrows input[data-key="filterDrop"][data-pos="a"]': '0.090',
+  '#rvrows input[data-key="supplyPlenum"][data-pos="b"]': '0.140',
+  '#rvrows input[data-key="supplyPlenum"][data-pos="a"]': '0.950',
+};
+
 const CASES = [
   ['bare (no photos, no client details)', {}],
+  ['real job (all three components up)', { photos: 2, fills: REAL, name: 'Todd Brown', addr: 'Comox, BC' }],
   ['typical (both photos, client named)', { photos: 2, name: 'Todd Brown', addr: 'Comox, BC' }],
   ['one photo only', { photos: 1 }],
   ['portrait photos', { photos: 2, portrait: true }],

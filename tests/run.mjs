@@ -243,20 +243,39 @@ test('directionality: airflow up and pressures down read as improvements', async
   await page.close();
 });
 
-test('a supply-plenum rise is amber, never red', async ({ browser, origin }) => {
+/** Badge class for one row of the Summary Calculations table. */
+const badgeFor = (page, name) => page.$$eval('.metric', (els, n) => {
+  const m = els.find(e => e.querySelector('.mname').textContent.startsWith(n));
+  return m ? (m.querySelector('.mbadge') || {}).className || '' : null;
+}, name);
+
+test('a component pressure that rose less than airflow reads as an improvement', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
-  await upload(page, 1, before);
-  await upload(page, 2, after);          // supply plenum rises 0.395 -> 0.428
-  await page.click('#gen');
-  const badge = await page.$$eval('.metric', els => {
-    const m = els.find(e => e.querySelector('.mname').textContent.startsWith('Supply Plenum'));
-    return m.querySelector('.mbadge').className;
-  });
-  ok(/\bw\b/.test(badge), `supply plenum badge should be amber, got "${badge}"`);
-  ok(!/\bb\b/.test(badge), 'supply plenum must not be red');
+  await report(page);              // supply plenum +8.4% against airflow +38.2%
+  const badge = await badgeFor(page, 'Supply Plenum');
+  ok(/\bg\b/.test(badge), `carrying more air for less pressure is an improvement, got "${badge}"`);
+  ok(/less than moving that much extra air through the same supply ducts normally costs/
+    .test(await page.$eval('#sheet', e => e.textContent)), 'and the copy says why');
   await page.close();
 });
 
+test('no component pressure is ever shown as a failure', async ({ browser, origin }) => {
+  // All three pushed up hard, well past the airflow gain.
+  const page = await openApp(browser, origin);
+  await report(page, {
+    '#rvrows input[data-key="returnPlenum"][data-pos="a"]': '0.900',
+    '#rvrows input[data-key="filterDrop"][data-pos="a"]': '0.400',
+    '#rvrows input[data-key="supplyPlenum"][data-pos="a"]': '0.950',
+  });
+  for (const name of ['Return Plenum', 'Filter Drop', 'Supply Plenum']) {
+    const badge = await badgeFor(page, name);
+    ok(/\bn\b/.test(badge), `${name} should be neutral, got "${badge}"`);
+    ok(!/\b[bw]\b/.test(badge), `${name} must never be red or amber, got "${badge}"`);
+  }
+  ok(!/wrong direction|restricting more than it was|worth confirming/
+    .test(await page.$eval('#sheet', e => e.textContent)), 'and none of the alarming copy survives');
+  await page.close();
+});
 test('SCFM/ton and the Conditions section stay out of the report', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
   await upload(page, 1, before);
@@ -323,7 +342,7 @@ test('an airflow gain gets the capacity write-up', async ({ browser, origin }) =
   await report(page);
   const txt = await page.$eval('#sheet', e => e.textContent);
   ok(/More air means more of the capacity you paid for/.test(txt), 'heading for the gain');
-  ok(/Airflow rose 38%/.test(txt), 'the actual percentage is quoted');
+  ok(/Airflow rose 38.2%/.test(txt), 'the actual percentage is quoted');
   ok(/842 → 1,164 SCFM/.test(txt), 'the actual values are quoted');
   ok(!/Airflow decreased/.test(txt), 'the loss copy is not also present');
   await page.close();
@@ -357,19 +376,84 @@ test('a static-pressure rise gets the harder-working write-up', async ({ browser
   await page.close();
 });
 
-test('a supply-plenum rise is explained as expected, not as a fault', async ({ browser, origin }) => {
+/** One line from the compact component panel on page two. */
+const compactRow = (page, name) => page.$$eval('.bcomp .row', (els, n) => {
+  const r = els.find(e => e.querySelector('.rk').textContent.startsWith(n));
+  return r ? { cls: r.className, text: r.textContent.replace(/\s+/g, ' ') } : null;
+}, name);
+
+/* The job that prompted this rewrite: a big return-side restriction cleared,
+   so airflow rose 21.2% and total external static fell 58.8% — while the
+   return plenum rose 2.7% and the supply plenum rose 142.9%. The old wording
+   called that "moved the wrong direction — worth a look", in front of the
+   customer, on a job that had done exactly what it set out to do. */
+const REAL_BEFORE = { ...BEFORE, date: '2026-08-25', totalFlow: '850', tesp: '0.850', returnPlenum: '0.370', filterDrop: '0.120', supplyPlenum: '0.140' };
+const REAL_AFTER  = { ...AFTER,  date: '2026-08-28', totalFlow: '1030', tesp: '0.350', returnPlenum: '0.380', filterDrop: '0.090', supplyPlenum: '0.340' };
+
+async function realJob(page) {
+  await upload(page, 1, trueFlowPdf(REAL_BEFORE));
+  await upload(page, 2, trueFlowPdf(REAL_AFTER));
+  await page.click('#gen');
+}
+
+test('the real job: nothing on the report reads as a failure', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
-  await report(page);
-  const row = await page.$$eval('.bcomp .row', els => {
-    const r = els.find(e => e.querySelector('.rk').textContent.startsWith('Supply Plenum'));
-    return r ? { cls: r.className, text: r.textContent } : null;
-  });
-  ok(row, 'a supply plenum line exists');
-  ok(/\bw\b/.test(row.cls), 'styled amber');
-  ok(/expected/.test(row.text) && /not a fault/.test(row.text), 'says it is expected and not a fault');
+  await realJob(page);
+  eq(await page.$$eval('.mbadge.b, .mbadge.w, .hcell.b, .hcell.w, .ben.b, .bcomp .row.b', els => els.length), 0,
+    'no red or amber anywhere on a job that did what it set out to do');
+  ok(!/Review/.test(await page.$eval('.hero', e => e.textContent)), 'no "Review" verdict in the headline row');
   await page.close();
 });
 
+test('the real job: a return plenum up 2.7% against airflow up 21.2% reads as progress', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await realJob(page);
+  ok(/\bg\b/.test(await badgeFor(page, 'Return Plenum')), 'scored as an improvement');
+  const row = await compactRow(page, 'Return Plenum');
+  ok(/Up 2.7%, against 21.2% more airflow/.test(row.text), 'both figures quoted together');
+  ok(/improving, not restricting/.test(row.text), 'and the conclusion drawn for the reader');
+  ok(!/worth confirming|restricting more than it was/.test(row.text), 'no trace of the old alarm');
+  await page.close();
+});
+
+test('the real job: a supply plenum up 142.9% is explained against the total that fell', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await realJob(page);
+  const row = await compactRow(page, 'Supply Plenum');
+  ok(/\bn\b/.test(row.cls), 'neutral — a component, not a verdict');
+  ok(/Up 142.9%/.test(row.text) && /21.2% more air/.test(row.text), 'the real numbers, not rounded away');
+  ok(/fell 58.8%/.test(row.text), 'anchored to the total external static drop');
+  ok(/not the result/.test(row.text), 'framed as a component of the outcome');
+  await page.close();
+});
+
+test('a row label and the prose beside it quote the same number', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await realJob(page);
+  const row = await compactRow(page, 'Return Plenum');
+  ok(/↑ 2.7%/.test(row.text), `label should read 2.7%, not a rounded 3% — got "${row.text.slice(0, 60)}"`);
+  await page.close();
+});
+
+test('a job that missed its goals still says so, through the metrics that judge it', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, {
+    '#rvrows input[data-key="totalFlow"][data-pos="a"]': '640',    // airflow fell
+    '#rvrows input[data-key="tesp"][data-pos="a"]': '0.950',       // static rose
+    '#rvrows input[data-key="returnPlenum"][data-pos="a"]': '0.700',
+  });
+  eq(await page.$$eval('.metric .mbadge.b', els => els.length), 2, 'airflow and TESP both flag red');
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/Airflow decreased — worth investigating/.test(txt), 'the airflow loss is stated plainly');
+  ok(/the blower is working harder/i.test(txt), 'so is the static rise');
+  const row = await compactRow(page, 'Return Plenum');
+  ok(/\bn\b/.test(row.cls), 'the component stays neutral');
+  ok(/read alongside total airflow and total external static/.test(row.text),
+    'and points at the metrics carrying the verdict rather than claiming a win');
+  ok(!/improving, not restricting|carrying considerably more air/.test(row.text),
+    'no success claimed on a job that did not succeed');
+  await page.close();
+});
 test('the three secondary metrics are one-liners, not full blocks', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
   await report(page);
