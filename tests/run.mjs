@@ -1114,6 +1114,39 @@ test('a report can be produced and filed with no signal at all', async ({ browse
   await page.close();
 });
 
+/* The write-ups are picked by arithmetic over the measurements, not written by
+   anything that has to be reached over a network. This drives the hardest case
+   — where the wording depends on comparing one metric against another — with
+   the connection cut, and checks the same sentences come out. */
+test('the write-ups choose the right wording with the network cut', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { serviceWorker: true });
+  await swReady(page);
+  await page.appContext.setOffline(true);
+  await page.reload({ waitUntil: 'load' });
+
+  await realJob(page);
+
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/Airflow rose 21.2%/.test(txt), 'the airflow write-up quotes the real figure');
+  ok(/dropped 58.8%/.test(txt), 'so does the static-pressure one');
+
+  // Needs return plenum (+2.7%) compared against airflow (+21.2%) to pick this.
+  const ret = await compactRow(page, 'Return Plenum');
+  ok(/\bg\b/.test(ret.cls), 'scored against the airflow gain, offline');
+  ok(/improving, not restricting/.test(ret.text), 'and picked the right one of four variants');
+
+  // Needs supply plenum (+142.9%) compared against airflow, then anchored to TESP.
+  const sup = await compactRow(page, 'Supply Plenum');
+  ok(/\bn\b/.test(sup.cls), 'neutral, offline');
+  ok(/fell 58.8%/.test(sup.text), 'and still reaches across to the TESP drop');
+
+  eq(await page.$$eval('.mbadge.b, .mbadge.w, .bcomp .row.b', els => els.length), 0,
+    'nothing reads as a failure offline either');
+
+  await page.appContext.setOffline(false);
+  await page.close();
+});
+
 test('going offline is announced, and the notice clears when signal returns', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
   ok(await page.$eval('#offlineStrip', e => e.hidden), 'nothing shown while online');

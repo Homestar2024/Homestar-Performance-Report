@@ -218,6 +218,13 @@ Two tiers:
 Nothing renders for a metric that did not move, or that is missing a before or
 after value. The report never claims a benefit it cannot show a number for.
 
+**The wording is chosen by arithmetic, not written on demand.** There is no
+model call and nothing to reach over a network: the sentences are in the file,
+and the app picks between them by comparing the measurements. So the write-ups
+behave identically offline, including the ones whose wording depends on
+comparing one metric against another. A test drives the hardest case with the
+connection cut and checks the same sentences come out.
+
 Keep the copy technically honest. Three traps worth knowing: more airflow does
 **not** improve dehumidification (it raises the sensible heat ratio — if
 anything it does the opposite); restored airflow returns a system to its
