@@ -1,25 +1,28 @@
 # Homestar HVAC — System Performance Verification Report
 
 Turns a pair of TEC TrueFlow® PDF exports (before and after an upgrade) into a
-branded, one-page, client-facing report showing the verified change in airflow
-and static pressure.
+branded, two-page, client-facing report showing the verified change in airflow
+and static pressure, what it means for the homeowner, and optional before/after
+photographs of the work.
 
 The whole app is **`index.html`** — one static file, no build step, no backend.
 It is served from GitHub Pages, so pushing to `main` deploys it.
 
 PDFs are parsed in the browser with [pdf.js](https://mozilla.github.io/pdf.js/)
 3.11.174 loaded from cdnjs. **Nothing is uploaded anywhere** — customer
-measurements never leave the device. No `localStorage`, no cookies, no
+measurements and photographs never leave the device; photos are decoded,
+scaled and embedded entirely in the page. No `localStorage`, no cookies, no
 analytics.
 
 ## Using it
 
 1. Open the page, choose the before and after TrueFlow PDFs.
-2. The **Confirm & correct** panel appears. Check that the two columns are the
+2. Optionally add a before photo and an after photo of the work.
+3. The **Confirm & correct** panel appears. Check that the two columns are the
    right way round (⇄ Swap if not) and fix any value the parser got wrong.
    Values it could not find are highlighted — type them in.
-3. Fill in client name, address and technician if you want them on the report.
-4. **Generate report**, then **Print / Save as PDF**.
+4. Fill in client name, address and technician if you want them on the report.
+5. **Generate report**, then **Print / Save as PDF**.
 
 Print settings: **Scale 100%, Margins Default, Background graphics ON,
 Headers/footers OFF.**
@@ -58,14 +61,57 @@ headless Chromium for this reason.
 SCFM/ton and the System & Conditions section were removed on purpose. Don't add
 them back.
 
-Section order: Header → Verified Results at a Glance → Summary Calculations →
-Air Measurements → Footer.
+Section order — page one: Header → Verified Results at a Glance → Summary
+Calculations → Air Measurements. Page two: What This Means For Your Home →
+Before & After (photos) → Footer.
 
-### The report must fit one Letter page
+### The benefit write-ups
 
-`@media print` compresses spacing, hides the per-metric notes, and sets
-`@page { size: letter portrait; margin: 0.5in }`. Current content is **929px
-against a 960px budget — 31px of headroom**, measured at true paper width.
+Page two explains each measurement in plain language, and the copy is chosen by
+**which way the number actually moved** — an airflow gain and an airflow loss
+get different write-ups, as do a static-pressure drop and a rise. All of it
+lives in the `BENEFITS` table in `index.html`, keyed by metric then `up`/`down`.
+Each entry is a function handed the formatted numbers (`c.pct`, `c.b`, `c.a`)
+so the copy quotes the job's real figures instead of reading like a template.
+
+Two tiers:
+
+- **Total Airflow** and **Total External Static Pressure** get a heading and a
+  paragraph. These are the two the customer is paying for.
+- **Return Plenum**, **Filter Drop** and **Supply Plenum** get one line each in
+  a compact panel. Supply plenum matters most of the three: it is the metric
+  that can legitimately go *up*, and its amber badge on page one invites the
+  question "is that bad?" — the line answers it before the customer asks.
+
+Nothing renders for a metric that did not move, or that is missing a before or
+after value. The report never claims a benefit it cannot show a number for.
+
+Keep the copy technically honest. Two traps worth knowing: more airflow does
+**not** improve dehumidification (it raises the sensible heat ratio — if
+anything it does the opposite), and restored airflow returns a system to its
+*rated* capacity, it does not exceed it.
+
+### Photographs
+
+Optional, one before and one after. They are decoded with EXIF orientation
+applied, scaled to a 1600px long edge and re-encoded as JPEG before being
+embedded, so a 5MB phone photo does not bloat the page and nothing prints
+sideways. Frames are fixed height with `object-fit: contain`, so portrait and
+landscape shots both sit in a consistent frame and neither gets cropped. If
+only one photo is added it renders on its own; if neither is, the section does
+not appear.
+
+### The report must fit exactly two Letter pages
+
+`@media print` compresses spacing, hides the per-metric notes, sets
+`@page { size: letter portrait; margin: 0.5in }`, and puts a hard page break
+before the page-two content via `.page2`. The budget is 960px per page,
+measured at true paper width (720px):
+
+| | page 1 | page 2 |
+| --- | --- | --- |
+| typical | 879px (81px spare) | 812px (148px spare) |
+| longest copy, both photos | 879px | 781px (179px spare) |
 
 Anything that adds vertical height needs re-checking with a real print render,
 not an eyeball:
@@ -74,8 +120,13 @@ not an eyeball:
 node tests/print-check.mjs
 ```
 
-Note this only constrains the **report**. The uploader and the Confirm &
-correct panel are hidden when printing, so they cost nothing on paper.
+It runs six content shapes — no photos, portrait photos, every metric moved the
+wrong way (the longest copy), long client name — and fails if any of them is
+not exactly two pages.
+
+Note this only constrains the **report**. The uploader, photo pickers and the
+Confirm & correct panel are hidden when printing, so they cost nothing on
+paper.
 
 ### pdf.js comes from a CDN
 
@@ -112,7 +163,8 @@ in place of the CDN, so it passes offline.
 
 The suite covers parsing (ligature splits, the per-ton trap, thousands
 separators), upload gating, before/after ordering and swapping, typed
-overrides, metric directionality, and the one-page print at three content
+overrides, metric directionality, benefit copy selection in both directions,
+photo decode/downscale/removal, and the two-page print at several content
 lengths.
 
 ### The corpus is the weak spot
@@ -142,4 +194,4 @@ Closing that gap means collecting real exports:
 
 Saved report history per client · multiple techs / login · emailing the report
 from the app · cross-job analytics · custom domain (report.homestarhvac.ca) ·
-bundling pdf.js for offline use.
+bundling pdf.js for offline use · more than one photo pair per report.

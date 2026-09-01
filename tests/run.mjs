@@ -10,7 +10,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, ROOT } from './lib/harness.mjs';
+import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, ROOT } from './lib/harness.mjs';
 import { trueFlowPdf, unrelatedPdf, BEFORE, AFTER } from './lib/make-pdf.mjs';
 
 const LETTER = { format: 'Letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } };
@@ -273,7 +273,8 @@ test('report sections appear in the agreed order', async ({ browser, origin }) =
   await upload(page, 2, after);
   await page.click('#gen');
   eq(await page.$$eval('#sheet .sh', els => els.map(e => e.textContent)),
-    ['Verified Results at a Glance', 'Summary Calculations — Before vs After', 'Air Measurements'], 'sections');
+    ['Verified Results at a Glance', 'Summary Calculations — Before vs After', 'Air Measurements',
+     'What This Means For Your Home'], 'sections');
   await page.close();
 });
 
@@ -306,28 +307,238 @@ test('a value that is not a number is flagged like a missing one', async ({ brow
   await page.close();
 });
 
-/* ----------------------------------------------------------------- print */
+/* -------------------------------------------------- benefits (page two) */
 
-test('the report prints on exactly one Letter page', async ({ browser, origin }) => {
-  const page = await openApp(browser, origin);
+/** Load the standard pair and generate, optionally overriding panel values first. */
+async function report(page, overrides = {}) {
   await upload(page, 1, before);
   await upload(page, 2, after);
+  for (const [sel, val] of Object.entries(overrides)) await page.fill(sel, val);
   await page.click('#gen');
-  const pdf = await page.pdf(LETTER);
-  eq(await pageCount(pdf), 1, 'page count');
+}
+
+test('an airflow gain gets the capacity write-up', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/More air means more of the capacity you paid for/.test(txt), 'heading for the gain');
+  ok(/Airflow rose 38%/.test(txt), 'the actual percentage is quoted');
+  ok(/842 → 1,164 SCFM/.test(txt), 'the actual values are quoted');
+  ok(!/Airflow decreased/.test(txt), 'the loss copy is not also present');
   await page.close();
 });
 
-test('one page still holds with a long client name and address', async ({ browser, origin }) => {
+test('an airflow loss gets the opposite write-up', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#rvrows input[data-key="totalFlow"][data-pos="a"]': '640' });
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/Airflow decreased — worth investigating/.test(txt), 'heading for the loss');
+  ok(/ice up/.test(txt), 'names the real consequence');
+  ok(!/capacity you paid for/.test(txt), 'the gain copy is gone');
+  await page.close();
+});
+
+test('a static-pressure drop gets the blower write-up', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/no longer fighting the ductwork/.test(txt), 'heading');
+  ok(/draws less power/.test(txt) && /quieter/.test(txt), 'covers energy and noise');
+  await page.close();
+});
+
+test('a static-pressure rise gets the harder-working write-up', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#rvrows input[data-key="tesp"][data-pos="a"]': '0.950' });
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/the blower is working harder/i.test(txt), 'heading');
+  ok(!/no longer fighting/.test(txt), 'the improvement copy is gone');
+  await page.close();
+});
+
+test('a supply-plenum rise is explained as expected, not as a fault', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  const row = await page.$$eval('.bcomp .row', els => {
+    const r = els.find(e => e.querySelector('.rk').textContent.startsWith('Supply Plenum'));
+    return r ? { cls: r.className, text: r.textContent } : null;
+  });
+  ok(row, 'a supply plenum line exists');
+  ok(/\bw\b/.test(row.cls), 'styled amber');
+  ok(/expected/.test(row.text) && /not a fault/.test(row.text), 'says it is expected and not a fault');
+  await page.close();
+});
+
+test('the three secondary metrics are one-liners, not full blocks', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  eq(await page.$$eval('.ben h4', els => els.length), 2, 'full write-ups');
+  eq(await page.$$eval('.bcomp .row', els => els.length), 3, 'compact lines');
+  await page.close();
+});
+
+test('a metric that did not move claims nothing', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#rvrows input[data-key="filterDrop"][data-pos="a"]': '0.108' });  // same as before
+  const keys = await page.$$eval('.bcomp .row .rk', els => els.map(e => e.textContent));
+  ok(!keys.some(k => k.startsWith('Filter Drop')), 'no line for an unchanged metric');
+  await page.close();
+});
+
+test('a metric with a missing value claims nothing', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#rvrows input[data-key="returnPlenum"][data-pos="a"]': '' });
+  const keys = await page.$$eval('.bcomp .row .rk', els => els.map(e => e.textContent));
+  ok(!keys.some(k => k.startsWith('Return Plenum')), 'no line without both values');
+  await page.close();
+});
+
+/* ------------------------------------------------------ photos (page two) */
+
+test('both photos render in labelled before/after frames', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
   await upload(page, 1, before);
   await upload(page, 2, after);
+  await attachPhoto(page, 1, { color: '#334455' });
+  await attachPhoto(page, 2, { color: '#556677' });
+  await page.click('#gen');
+  eq(await page.$$eval('.shot img', els => els.length), 2, 'two frames');
+  eq(await page.$$eval('.shot .pt', els => els.map(e => e.textContent)), ['Before', 'After'], 'labels');
+  ok(await page.$eval('.shot img', e => e.src.startsWith('data:image/jpeg')), 'embedded, not linked');
+  await page.close();
+});
+
+test('a single photo renders on its own without a gap', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await attachPhoto(page, 2);
+  await page.click('#gen');
+  eq(await page.$$eval('.shot img', els => els.length), 1, 'one frame');
+  ok(await page.$eval('.shots', e => e.classList.contains('one')), 'laid out for one');
+  eq(await page.$eval('.shot .pt', e => e.textContent), 'After', 'labelled correctly');
+  await page.close();
+});
+
+test('no photos means no photo section at all', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  eq(await page.$$eval('.shot', els => els.length), 0, 'no frames');
+  // (the report title also contains "Before & After", so check the headings)
+  const heads = await page.$$eval('#sheet .sh', els => els.map(e => e.textContent));
+  ok(!heads.includes('Before & After'), 'no photo section heading');
+  await page.close();
+});
+
+test('a large phone-sized photo is scaled down before it is embedded', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await attachPhoto(page, 1, { w: 4032, h: 3024 });
+  const url = await page.evaluate(() => photos[1]);
+  const size = await dataUrlSize(page, url);
+  eq(size, { w: 1600, h: 1200 }, 'scaled to a 1600px long edge, aspect kept');
+  await page.close();
+});
+
+test('a portrait photo keeps its orientation through the downscale', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await attachPhoto(page, 1, { w: 3024, h: 4032 });
+  const size = await dataUrlSize(page, await page.evaluate(() => photos[1]));
+  eq(size, { w: 1200, h: 1600 }, 'still taller than wide');
+  await page.close();
+});
+
+test('removing a photo takes it out of the report', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await attachPhoto(page, 1);
+  await page.click('#p1 .plink');
+  eq(await page.evaluate(() => photos[1]), null, 'cleared');
+  ok(!(await page.$eval('#p1', e => e.classList.contains('set'))), 'picker reset');
+  await page.click('#gen');
+  eq(await page.$$eval('.shot', els => els.length), 0, 'not in the report');
+  await page.close();
+});
+
+test('a file that is not an image is rejected without breaking the form', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await attachBadPhoto(page, 1);
+  eq(await page.evaluate(() => photos[1]), null, 'nothing stored');
+  ok(!(await page.$eval('#gen', e => e.disabled)), 'the report can still be generated');
+  await page.close();
+});
+
+test('attaching a photo retires the report on screen', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  await attachPhoto(page, 1);
+  ok(!(await page.evaluate(() => document.body.classList.contains('has-report'))), 'retired');
+  await page.close();
+});
+
+/* ----------------------------------------------------------------- print */
+
+test('the report prints on exactly two Letter pages', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  await attachPhoto(page, 1, { w: 4032, h: 3024 });
+  await attachPhoto(page, 2, { w: 3024, h: 4032 });   // one landscape, one portrait
+  await page.click('#gen');
+  eq(await pageCount(await page.pdf(LETTER)), 2, 'page count');
+  await page.close();
+});
+
+test('two pages still holds with a long client name and address', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await attachPhoto(page, 1);
+  await attachPhoto(page, 2);
   await page.fill('#cName', 'Christopher & Alexandra Vanderhoof-Williamson');
   await page.fill('#cAddr', '4471 Cumberland Road, Courtenay, British Columbia V9N 9X4');
   await page.fill('#cTech', 'Calvin Windsor');
   await page.click('#gen');
-  const pdf = await page.pdf(LETTER);
-  eq(await pageCount(pdf), 1, 'page count');
+  eq(await pageCount(await page.pdf(LETTER)), 2, 'page count');
+  await page.close();
+});
+
+test('two pages holds with no photos — benefits alone do not overflow', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  eq(await pageCount(await page.pdf(LETTER)), 2, 'page count');
+  await page.close();
+});
+
+test('two pages holds when every metric moved the wrong way', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  // The "worth investigating" copy runs longer than the improvement copy.
+  await report(page, {
+    '#rvrows input[data-key="totalFlow"][data-pos="a"]': '640',
+    '#rvrows input[data-key="tesp"][data-pos="a"]': '0.950',
+    '#rvrows input[data-key="returnPlenum"][data-pos="a"]': '0.600',
+    '#rvrows input[data-key="filterDrop"][data-pos="a"]': '0.240',
+    '#rvrows input[data-key="supplyPlenum"][data-pos="a"]': '0.500',
+  });
+  await attachPhoto(page, 1);
+  await attachPhoto(page, 2);
+  await page.click('#gen');
+  eq(await pageCount(await page.pdf(LETTER)), 2, 'page count');
+  await page.close();
+});
+
+test('the benefits and photos land on page two, not page one', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page);
+  await attachPhoto(page, 1);
+  await page.click('#gen');
+  const breaks = await page.$$eval('#sheet .page2', els => els.length);
+  eq(breaks, 1, 'exactly one page break in the report');
+  ok(await page.$eval('#sheet .page2 .sh', e => e.textContent === 'What This Means For Your Home'),
+    'the break sits before the write-ups');
   await page.close();
 });
 

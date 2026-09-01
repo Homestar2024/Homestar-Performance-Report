@@ -108,6 +108,49 @@ function nodePdfjs() {
   return _pdfjs;
 }
 
+/**
+ * Attach a generated image to one of the photo slots. Built in the page with
+ * a canvas and handed to the real input, so the app's own change handler,
+ * decode and downscale all run.
+ */
+export async function attachPhoto(page, slot, { w = 800, h = 600, color = '#8899aa' } = {}) {
+  await page.evaluate(async ({ slot, w, h, color }) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    x.fillStyle = color; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#fff'; x.fillRect(w * 0.1, h * 0.1, w * 0.3, h * 0.2);
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], `photo${slot}.png`, { type: 'image/png' }));
+    const inp = document.getElementById('pf' + slot);
+    inp.files = dt.files;
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+  }, { slot, w, h, color });
+  await page.waitForFunction(s => document.getElementById('p' + s).classList.contains('set'), slot, { timeout: 15000 });
+}
+
+/** Attach a file that is not a decodable image. */
+export async function attachBadPhoto(page, slot) {
+  await page.evaluate(s => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['not an image'], 'notes.txt', { type: 'text/plain' }));
+    const inp = document.getElementById('pf' + s);
+    inp.files = dt.files;
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+  }, slot);
+  await page.waitForFunction(s => /Couldn/.test(document.getElementById('pn' + s).textContent), slot, { timeout: 15000 });
+}
+
+/** Natural size of an image held in a data URL, measured in the page. */
+export async function dataUrlSize(page, url) {
+  return page.evaluate(u => new Promise(res => {
+    const i = new Image();
+    i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight });
+    i.src = u;
+  }), url);
+}
+
 /** Page count of a rendered PDF buffer, read with pdf.js in node. */
 export async function pageCount(buffer) {
   const pdfjs = nodePdfjs();
