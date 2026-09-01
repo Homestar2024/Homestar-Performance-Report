@@ -5,14 +5,36 @@ branded, two-page, client-facing report showing the verified change in airflow
 and static pressure, what it means for the homeowner, and optional before/after
 photographs of the work.
 
-The whole app is **`index.html`** — one static file, no build step, no backend.
-It is served from GitHub Pages, so pushing to `main` deploys it.
+The app is **`index.html`** plus the files that make it installable and
+offline-capable — no build step, no backend, no third-party origin. It is
+served from GitHub Pages, so pushing to `main` deploys it.
+
+```
+index.html              the whole app: parser, report, history
+sw.js                   service worker — offline shell
+manifest.webmanifest    install metadata
+vendor/                 pdf.js 3.11.174, served from this origin
+icons/                  192/512/maskable launcher icons
+.nojekyll               serve the files as-is, no Jekyll processing
+tests/                  not deployed
+```
 
 PDFs are parsed in the browser with [pdf.js](https://mozilla.github.io/pdf.js/)
-3.11.174 loaded from cdnjs. **Nothing is uploaded anywhere** — customer
-measurements and photographs never leave the device; photos are decoded,
-scaled and embedded entirely in the page. No `localStorage`, no cookies, no
-analytics.
+3.11.174. **Nothing is uploaded anywhere and nothing is fetched from anywhere**
+— customer measurements and photographs never leave the device; photos are
+decoded, scaled and embedded entirely in the page. No `localStorage`, no
+cookies, no analytics, no CDN.
+
+## Install it on the phone
+
+Open the site in Chrome on Android and use **Add to home screen** (Chrome
+usually offers it by itself). It then launches like an app, without browser
+chrome, and works with no signal — everything it needs was cached on the first
+visit. iOS is the same via Share → Add to Home Screen.
+
+Offline, the app tells you it is offline and keeps working: PDFs still parse,
+reports still generate, history still saves. Only the first visit needs a
+connection.
 
 ## Using it
 
@@ -200,24 +222,43 @@ Note this only constrains the **report**. The uploader, photo pickers and the
 Confirm & correct panel are hidden when printing, so they cost nothing on
 paper.
 
-### pdf.js comes from a CDN
+### pdf.js ships with the app
 
-If cdnjs is unreachable the page now says so and disables the uploads instead of
-appearing to work and doing nothing. That is a message, not a fix — the app
-still needs the network on first load.
+`vendor/pdf.min.js` and `vendor/pdf.worker.min.js` are the pdf.js 3.11.174
+build, committed to the repo and served from this origin. There is no CDN, so
+there is nothing to be blocked, nothing to go stale, and no subresource
+integrity hash to maintain. Replacing them means replacing both files together
+and re-running the suite — the parser's regexes are tuned to how *this* version
+tokenises text.
 
-There is deliberately **no `integrity` hash** on the script tag: an incorrect
-one takes the whole app down, and it has to be generated from the exact bytes
-cdnjs serves. To add it from a machine that can reach the CDN:
+If pdf.js fails to load at all, the page says so and disables the uploads
+rather than appearing to work and doing nothing.
 
-```
-curl -s https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js \
-  | openssl dgst -sha384 -binary | openssl base64 -A
-```
+### The service worker, and how not to brick the app
 
-then put `integrity="sha384-<output>"` on the `<script>` tag and confirm the app
-still loads. (Bundling pdf.js into the file instead would make it work offline
-and drop the CDN entirely, at roughly +1.4MB.)
+`sw.js` caches the shell on first visit. Two rules keep a bad release from
+becoming permanent, and both matter more than they look:
+
+1. **Navigations are network-first** (3s timeout, then cache). A fresh
+   `index.html` always wins when there is any usable connection, so a broken
+   release is fixed by pushing another one — not by asking a technician to
+   clear site data in a crawlspace.
+2. **The worker never calls `skipWaiting()` on its own.** A new version
+   installs, then waits. The page shows "Update available — reload when you're
+   between jobs" and only takes over when it is clicked. Nobody gets reloaded
+   out of a half-finished report. A test asserts `skipWaiting` appears exactly
+   once in `sw.js` and only inside the `SKIP_WAITING` message handler.
+
+**Bump `VERSION` in `sw.js` whenever that file or the shell list changes.**
+Old caches are deleted on activate by name prefix.
+
+`.nojekyll` matters: without it GitHub Pages runs the files through Jekyll,
+whose exclude rules can silently drop paths — `vendor/` among the candidates —
+and a missing pdf.js would break the app with no build error anywhere.
+
+The launcher icons are upscaled from the 180×180 mark embedded in the page, so
+the 512 is slightly soft. A native 512×512 export of the "H" mark dropped into
+`icons/` (same filenames) would sharpen it.
 
 ## Tests
 
@@ -230,15 +271,26 @@ npm run print-check  # just the one-page check, with the numbers
 ```
 
 Everything runs against `index.html` in real headless Chromium with real
-pdf.js. The suite is hermetic — it serves the pdf.js build from `node_modules`
-in place of the CDN, so it passes offline.
+pdf.js, served over `http://127.0.0.1` — a secure origin, so service workers
+register exactly as they do in production. The suite is hermetic and needs no
+network.
+
+Service workers are **blocked by default** in tests: an active worker serving
+from cache makes routing and timing nondeterministic. The PWA tests opt in with
+`openApp(browser, origin, { serviceWorker: true })`.
+
+One trap worth knowing: `page.waitForFunction` does **not** await a promise
+returned by its predicate — it sees the Promise object, calls it truthy, and
+resolves immediately. Anything that has to ask the service worker a question
+must be polled from node with `pollEval`, where `page.evaluate` does await.
 
 The suite covers parsing (ligature splits, the per-ton trap, thousands
 separators), upload gating, before/after ordering and swapping, typed
 overrides, metric directionality, benefit copy selection in both directions,
 photo decode/downscale/removal, history save/reopen/rename/delete/search,
-backup export and import, storage-failure fallback, cross-job carry-over, and
-the two-page print at several content lengths.
+backup export and import, storage-failure fallback, cross-job carry-over,
+offline operation end to end, the service-worker update handshake, manifest and
+icon validity, and the two-page print at several content lengths.
 
 ### The corpus is the weak spot
 
@@ -267,7 +319,6 @@ Closing that gap means collecting real exports:
 
 Multiple techs / login · emailing the report from the app · cross-job
 analytics off the stored history · custom domain (report.homestarhvac.ca) ·
-more than one photo pair per report · **installable offline app** (a web app
-manifest plus a service worker would put it on the Android home screen, work
-with no signal, and remove the pdf.js CDN dependency at the same time) ·
-shared history across devices, which needs a backend.
+more than one photo pair per report · pre-filling the address when a customer
+name matches an existing record · shared history across devices, which needs a
+backend.

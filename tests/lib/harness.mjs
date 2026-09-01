@@ -9,29 +9,32 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const ROOT = path.resolve(here, '../..');
 const require = createRequire(pathToFileURL(path.join(here, '../')));
 
-/**
- * The app loads pdf.js from cdnjs. Tests serve the byte-identical 3.11.174
- * build from node_modules instead, so the suite is hermetic and does not
- * depend on the CDN being reachable. Everything else — the parser, the DOM,
- * the print engine — is the real thing.
- */
-const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
-const LOCAL = {
-  'pdf.min.js': require.resolve('pdfjs-dist/build/pdf.min.js'),
-  'pdf.worker.min.js': require.resolve('pdfjs-dist/build/pdf.worker.min.js'),
+const TYPES = {
+  '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json', '.png': 'image/png',
+  '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown',
 };
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.pdf': 'application/pdf' };
-
-export async function serve() {
+/**
+ * Serve the app over http://127.0.0.1, which counts as a secure origin, so
+ * service workers register exactly as they do on the deployed site.
+ * pdf.js is served from ./vendor like it is in production — there is no CDN
+ * left to stub.
+ */
+export async function serve(root = ROOT) {
+  const base = path.resolve(root);
   const server = http.createServer((req, res) => {
     const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html';
-    const file = path.join(ROOT, rel);
-    if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    let file = path.join(base, rel);
+    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
+    if (!file.startsWith(base) || !fs.existsSync(file)) {
       res.writeHead(404).end('not found');
       return;
     }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
+      'cache-control': 'no-cache',
+    });
     fs.createReadStream(file).pipe(res);
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -39,23 +42,84 @@ export async function serve() {
 }
 
 /**
+ * Open the app in its own browser context, so each test gets a clean
+ * IndexedDB, cache storage and service-worker registration.
+ *
  * @param {object} opts
- * @param {boolean} [opts.blockCdn] Simulate an unreachable CDN instead of
- *                                  serving the local pdf.js build.
+ * @param {boolean} [opts.serviceWorker] Allow the worker to register. Off by
+ *   default: an active worker would serve requests from its cache and make
+ *   every other test's routing and timing nondeterministic.
+ * @param {boolean} [opts.breakPdfjs] Serve a 404 for the vendored pdf.js, to
+ *   exercise the "part of the app is missing" path.
  */
-export async function openApp(browser, origin, { blockCdn = false } = {}) {
-  const page = await browser.newPage();
+export async function openApp(browser, origin, { serviceWorker = false, breakPdfjs = false } = {}) {
+  const context = await browser.newContext({
+    serviceWorkers: serviceWorker ? 'allow' : 'block',
+    acceptDownloads: true,
+  });
+  const page = await context.newPage();
+  page.once('close', () => context.close().catch(() => {}));
+  page.appContext = context;
+
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
-  await page.route(CDN + '*', route => {
-    if (blockCdn) return route.abort('failed');
-    const local = LOCAL[route.request().url().slice(CDN.length)];
-    if (!local) return route.abort('failed');
-    return route.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(local) });
-  });
+  if (breakPdfjs) await page.route('**/vendor/pdf.min.js', route => route.abort('failed'));
+
   await page.goto(origin + '/index.html', { waitUntil: 'load' });
   page.pageErrors = errors;
   return page;
+}
+
+/**
+ * Poll a page-side async function from node until it satisfies `done`.
+ *
+ * page.waitForFunction does NOT await a promise returned by its predicate — it
+ * sees the Promise object, calls it truthy and resolves immediately. Anything
+ * asking the service worker a question has to be polled from here instead.
+ * Navigations destroy the execution context mid-poll, which is expected while
+ * a worker takes over, so those errors are swallowed and retried.
+ */
+export async function pollEval(page, fn, done, { timeout = 30000, every = 100 } = {}) {
+  const deadline = Date.now() + timeout;
+  let last;
+  for (;;) {
+    try {
+      last = await page.evaluate(fn);
+      if (done(last)) return last;
+    } catch (e) {
+      if (!/context was destroyed|Execution context|Target closed|navigation/i.test(String(e))) throw e;
+    }
+    if (Date.now() > deadline) throw new Error(`timed out waiting; last saw ${JSON.stringify(last)}`);
+    await new Promise(r => setTimeout(r, every));
+  }
+}
+
+/**
+ * Wait until a service worker is activated AND controlling the page. Activation
+ * only happens after the install handler's waitUntil settles, so by this point
+ * the shell is cached.
+ */
+export async function swReady(page, timeout = 30000) {
+  await pollEval(page, async () => {
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    return {
+      active: !!(reg && reg.active && reg.active.state === 'activated'),
+      controlling: !!(navigator.serviceWorker && navigator.serviceWorker.controller),
+    };
+  }, r => r && r.active && r.controlling, { timeout });
+}
+
+/** Names of everything the worker has cached, relative to the origin. */
+export function cachedPaths(page) {
+  return page.evaluate(async () => {
+    const names = await caches.keys();
+    const out = [];
+    for (const n of names) {
+      const keys = await (await caches.open(n)).keys();
+      for (const r of keys) out.push(new URL(r.url).pathname);
+    }
+    return out.sort();
+  });
 }
 
 /**

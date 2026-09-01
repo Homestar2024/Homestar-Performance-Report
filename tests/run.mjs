@@ -9,8 +9,9 @@
  *   node tests/run.mjs
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, ROOT } from './lib/harness.mjs';
+import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, ROOT } from './lib/harness.mjs';
 import { trueFlowPdf, unrelatedPdf, BEFORE, AFTER } from './lib/make-pdf.mjs';
 
 const LETTER = { format: 'Letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } };
@@ -139,8 +140,8 @@ test('a readable PDF with no recognisable measurements is correctable, not fatal
   await page.close();
 });
 
-test('a blocked pdf.js CDN says so instead of failing silently', async ({ browser, origin }) => {
-  const page = await openApp(browser, origin, { blockCdn: true });
+test('a missing pdf.js says so instead of failing silently', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { breakPdfjs: true });
   ok(!(await page.$eval('#loadWarn', e => e.hidden)), 'the warning banner is visible');
   ok(await page.$eval('#f1', e => e.disabled), 'uploads are disabled');
   eq(page.pageErrors, [], 'no uncaught script errors');
@@ -923,6 +924,157 @@ test('the print stylesheet targets Letter portrait at 0.5in', async ({ browser, 
   ok(/@page\{?\s*size:\s*letter portrait/i.test(css.replace(/\s+/g, ' ')), '@page size');
   ok(/margin:\s*0\.5in/i.test(css), '@page margin');
   await page.close();
+});
+
+/* ----------------------------------------------- installable offline app */
+
+const readPng = file => {
+  const b = fs.readFileSync(path.join(ROOT, file));
+  return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+};
+
+test('the app ships nothing from a third-party origin', async ({ browser, origin }) => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const external = [...html.matchAll(/(?:src|href)="(https?:)?\/\/[^"]+"/g)].map(m => m[0]);
+  eq(external, [], 'no remote scripts, styles or images');
+  const page = await openApp(browser, origin);
+  const remote = [];
+  page.on('request', r => { if (!r.url().startsWith(origin) && !r.url().startsWith('data:')) remote.push(r.url()); });
+  await upload(page, 1, before);
+  eq(remote, [], 'nothing was fetched off-origin, even while parsing a PDF');
+  await page.close();
+});
+
+test('the vendored pdf.js is the version the parser was written against', async ({ browser, origin }) => {
+  const js = fs.readFileSync(path.join(ROOT, 'vendor/pdf.min.js'), 'utf8');
+  ok(js.includes('3.11.174'), 'pdf.min.js is 3.11.174');
+  ok(fs.existsSync(path.join(ROOT, 'vendor/pdf.worker.min.js')), 'the worker ships too');
+  ok(fs.existsSync(path.join(ROOT, 'vendor/LICENSE-pdfjs')), "pdf.js's licence travels with it");
+  const page = await openApp(browser, origin);
+  eq(await page.evaluate(() => pdfjsLib.version), '3.11.174', 'and that is what the page loaded');
+  await page.close();
+});
+
+test('the manifest is valid and its icons are the sizes it claims', async () => {
+  const m = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.webmanifest'), 'utf8'));
+  eq(m.display, 'standalone', 'installs as an app, not a browser tab');
+  eq([m.start_url, m.scope, m.id], ['./', './', './'], 'relative — the site lives under a repo subpath');
+  ok(m.name && m.short_name, 'named');
+  for (const icon of m.icons) {
+    const file = icon.src.replace(/^\.\//, '');
+    ok(fs.existsSync(path.join(ROOT, file)), `${file} exists`);
+    const { w, h } = readPng(file);
+    eq(`${w}x${h}`, icon.sizes, `${file} really is ${icon.sizes}`);
+  }
+  ok(m.icons.some(i => i.purpose === 'maskable'), 'a maskable icon for Android launchers');
+  ok(m.icons.some(i => i.sizes === '512x512' && i.purpose === 'any'), 'a 512 for the install prompt');
+});
+
+test('the page links the manifest and declares a theme colour', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  eq(await page.$eval('link[rel="manifest"]', e => e.getAttribute('href')), './manifest.webmanifest', 'linked');
+  eq(await page.$eval('meta[name="theme-color"]', e => e.content), '#1E6FB8', 'brand blue');
+  await page.close();
+});
+
+test('the service worker installs and caches everything the app needs', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { serviceWorker: true });
+  await swReady(page);
+  const cached = await cachedPaths(page);
+  for (const want of ['/index.html', '/vendor/pdf.min.js', '/vendor/pdf.worker.min.js',
+                      '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']) {
+    ok(cached.some(p => p.endsWith(want)), `${want} is cached — got ${cached.join(', ')}`);
+  }
+  await page.close();
+});
+
+test('the app loads with the network cut', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { serviceWorker: true });
+  await swReady(page);
+  await page.appContext.setOffline(true);
+  await page.reload({ waitUntil: 'load' });
+  ok(await page.$('#gen'), 'the uploader is there');
+  eq(await page.evaluate(() => typeof pdfjsLib), 'object', 'pdf.js loaded from cache');
+  await page.appContext.setOffline(false);
+  await page.close();
+});
+
+test('a report can be produced and filed with no signal at all', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { serviceWorker: true });
+  await swReady(page);
+  await page.appContext.setOffline(true);
+  await page.reload({ waitUntil: 'load' });
+
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await page.fill('#cName', 'Todd Brown');
+  await page.click('#gen');
+  ok(/1,164/.test(await page.$eval('.hcell', e => e.textContent)), 'the report rendered offline');
+
+  await stubPrint(page);
+  await printReport(page);
+  eq((await records(page)).length, 1, 'and it saved to history offline');
+  await page.appContext.setOffline(false);
+  await page.close();
+});
+
+test('going offline is announced, and the notice clears when signal returns', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  ok(await page.$eval('#offlineStrip', e => e.hidden), 'nothing shown while online');
+  await page.appContext.setOffline(true);
+  await page.evaluate(() => window.dispatchEvent(new Event('offline')));
+  ok(!(await page.$eval('#offlineStrip', e => e.hidden)), 'the offline notice appears');
+  ok(/still works/.test(await page.$eval('#offlineStrip', e => e.textContent)), 'and is reassuring, not alarming');
+  await page.appContext.setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  ok(await page.$eval('#offlineStrip', e => e.hidden), 'and clears again');
+  await page.close();
+});
+
+test('the worker never takes over on its own', async () => {
+  const sw = fs.readFileSync(path.join(ROOT, 'sw.js'), 'utf8');
+  // skipWaiting is legitimate inside the message handler; anywhere else it
+  // would reload a technician out of a half-finished report.
+  const calls = [...sw.matchAll(/self\.skipWaiting\(\)/g)].length;
+  eq(calls, 1, 'exactly one skipWaiting');
+  const handler = sw.slice(sw.indexOf("addEventListener('message'"));
+  ok(handler.includes('self.skipWaiting()'), 'and it is the one behind SKIP_WAITING');
+});
+
+test('a new version waits for the tech, then takes over on request', async ({ browser }) => {
+  // Serve a throwaway copy so the deployed files can be mutated mid-test.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homestar-pwa-'));
+  for (const f of ['index.html', 'sw.js', 'manifest.webmanifest']) fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
+  for (const d of ['vendor', 'icons']) fs.cpSync(path.join(ROOT, d), path.join(dir, d), { recursive: true });
+  const { server, origin } = await serve(dir);
+  try {
+    const page = await openApp(browser, origin, { serviceWorker: true });
+    await swReady(page);
+    ok(await page.$eval('#updateStrip', e => e.hidden), 'a first install is not an "update"');
+
+    // Ship a new release.
+    fs.writeFileSync(path.join(dir, 'sw.js'),
+      fs.readFileSync(path.join(dir, 'sw.js'), 'utf8').replace("const VERSION = 'v1'", "const VERSION = 'v2'"));
+    await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration()).update(); });
+
+    await page.waitForSelector('#updateStrip:not([hidden])', { timeout: 30000 });
+    ok(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration()).waiting),
+      'the new version is waiting, not running');
+    eq(await page.evaluate(() => caches.keys().then(k => k.sort())), ['homestar-v1', 'homestar-v2'],
+      'the new cache is built while the old version keeps serving');
+
+    await page.click('#updateNow');
+    // The page reloads itself when the new worker takes control, so poll from
+    // node across the navigation rather than from inside the page.
+    await pollEval(page, () => caches.keys().then(k => k.sort().join()),
+      names => names === 'homestar-v2');
+    await swReady(page);
+    ok(await page.$('#gen'), 'the app came back up on the new version');
+    await page.close();
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /* ------------------------------------------------------------------ run */
