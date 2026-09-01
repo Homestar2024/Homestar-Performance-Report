@@ -16,7 +16,7 @@
  *
  * Bump VERSION on every change to this file or the shell list.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const CACHE = `homestar-${VERSION}`;
 const NAV_TIMEOUT_MS = 3000;
 
@@ -24,6 +24,12 @@ const SHELL = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './app/core.js',
+  './app/parser.js',
+  './app/intake.js',
+  './app/report.js',
+  './app/history.js',
+  './app/pwa.js',
   './vendor/pdf.min.js',
   './vendor/pdf.worker.min.js',
   './icons/icon-192.png',

@@ -658,6 +658,17 @@ async function resetApp(page) {
     null, { timeout: 15000 });
 }
 
+/**
+ * Names in the saved list, once it has settled on the expected count.
+ * renderHistory() is async, so typing in the search box updates the DOM a tick
+ * later — reading it straight after fill() races the re-render.
+ */
+async function histNames(page, expected) {
+  await page.waitForFunction(n => document.querySelectorAll('.hname').length === n,
+    expected, { timeout: 10000 });
+  return page.$$eval('.hname', els => els.map(e => e.textContent));
+}
+
 /** Open a record and wait for the restore to finish, not just for the click. */
 async function openFromHistory(page, selector = '[data-open]') {
   await page.click(selector);
@@ -829,12 +840,13 @@ test('search filters the saved list by name and address', async ({ browser, orig
   await printReport(page);
 
   await page.click('#histToggle');
-  eq(await page.$$eval('.hname', els => els.length), 2, 'both listed');
+  eq((await histNames(page, 2)).length, 2, 'both listed');
   await page.fill('#histSearch', 'klass');
-  eq(await page.$$eval('.hname', els => els.map(e => e.textContent)), ['Wanda Klassen'], 'filtered by name');
+  eq(await histNames(page, 1), ['Wanda Klassen'], 'filtered by name');
   await page.fill('#histSearch', 'cumberland');
-  eq(await page.$$eval('.hname', els => els.map(e => e.textContent)), ['Wanda Klassen'], 'filtered by address');
+  eq(await histNames(page, 1), ['Wanda Klassen'], 'filtered by address');
   await page.fill('#histSearch', 'zzz');
+  await page.waitForSelector('.hempty');
   ok(/No report matches/.test(await page.$eval('#histList', e => e.textContent)), 'says so when nothing matches');
   await page.close();
 });
@@ -1078,7 +1090,9 @@ test('the service worker installs and caches everything the app needs', async ({
   await swReady(page);
   const cached = await cachedPaths(page);
   for (const want of ['/index.html', '/vendor/pdf.min.js', '/vendor/pdf.worker.min.js',
-                      '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']) {
+                      '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png',
+                      '/app/core.js', '/app/parser.js', '/app/intake.js',
+                      '/app/report.js', '/app/history.js', '/app/pwa.js']) {
     ok(cached.some(p => p.endsWith(want)), `${want} is cached — got ${cached.join(', ')}`);
   }
   await page.close();
@@ -1174,29 +1188,35 @@ test('a new version waits for the tech, then takes over on request', async ({ br
   // Serve a throwaway copy so the deployed files can be mutated mid-test.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homestar-pwa-'));
   for (const f of ['index.html', 'sw.js', 'manifest.webmanifest']) fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
-  for (const d of ['vendor', 'icons']) fs.cpSync(path.join(ROOT, d), path.join(dir, d), { recursive: true });
+  for (const d of ['app', 'vendor', 'icons']) fs.cpSync(path.join(ROOT, d), path.join(dir, d), { recursive: true });
   const { server, origin } = await serve(dir);
   try {
     const page = await openApp(browser, origin, { serviceWorker: true });
     await swReady(page);
     ok(await page.$eval('#updateStrip', e => e.hidden), 'a first install is not an "update"');
 
-    // Ship a new release.
-    fs.writeFileSync(path.join(dir, 'sw.js'),
-      fs.readFileSync(path.join(dir, 'sw.js'), 'utf8').replace("const VERSION = 'v1'", "const VERSION = 'v2'"));
+    // Ship a new release. Read the version out rather than assuming one, so
+    // bumping sw.js for a real change cannot quietly neuter this test.
+    const swSrc = fs.readFileSync(path.join(dir, 'sw.js'), 'utf8');
+    const current = swSrc.match(/const VERSION = '([^']+)'/);
+    ok(current, 'sw.js declares a VERSION');
+    const bumped = swSrc.replace(current[0], "const VERSION = 'test-next'");
+    ok(bumped !== swSrc, 'the new release really differs from the old one');
+    fs.writeFileSync(path.join(dir, 'sw.js'), bumped);
     await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration()).update(); });
 
     await page.waitForSelector('#updateStrip:not([hidden])', { timeout: 30000 });
     ok(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration()).waiting),
       'the new version is waiting, not running');
-    eq(await page.evaluate(() => caches.keys().then(k => k.sort())), ['homestar-v1', 'homestar-v2'],
+    eq(await page.evaluate(() => caches.keys().then(k => k.sort())),
+      [`homestar-${current[1]}`, 'homestar-test-next'].sort(),
       'the new cache is built while the old version keeps serving');
 
     await page.click('#updateNow');
     // The page reloads itself when the new worker takes control, so poll from
     // node across the navigation rather than from inside the page.
     await pollEval(page, () => caches.keys().then(k => k.sort().join()),
-      names => names === 'homestar-v2');
+      names => names === 'homestar-test-next');
     await swReady(page);
     ok(await page.$('#gen'), 'the app came back up on the new version');
     await page.close();

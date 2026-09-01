@@ -10,7 +10,13 @@ offline-capable — no build step, no backend, no third-party origin. It is
 served from GitHub Pages, so pushing to `main` deploys it.
 
 ```
-index.html              the whole app: parser, report, history
+index.html              markup, styles, embedded logo and icons
+app/core.js             config, shared state, METRICS/FIELDS, helpers
+app/parser.js           reading TEC TrueFlow PDFs
+app/intake.js           uploader, confirm & correct panel, photographs
+app/report.js           scoring, write-ups, report assembly
+app/history.js          IndexedDB storage, backup, print actions
+app/pwa.js              connection notice, service-worker updates
 sw.js                   service worker — offline shell
 manifest.webmanifest    install metadata
 vendor/                 pdf.js 3.11.174, served from this origin
@@ -18,6 +24,12 @@ icons/                  192/512/maskable launcher icons
 .nojekyll               serve the files as-is, no Jekyll processing
 tests/                  not deployed
 ```
+
+The `app/*.js` files are **classic scripts, not ES modules**, loaded in the
+order listed. They share one global scope, which is why the split changed no
+behaviour at all — execution order is identical to when it was one inline
+block. Adding a file means adding a `<script>` tag *and* an entry in `sw.js`'s
+`SHELL`, then bumping its `VERSION`.
 
 PDFs are parsed in the browser with [pdf.js](https://mozilla.github.io/pdf.js/)
 3.11.174. **Nothing is uploaded anywhere and nothing is fetched from anywhere**
