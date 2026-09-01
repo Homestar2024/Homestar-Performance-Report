@@ -645,6 +645,19 @@ async function printReport(page) {
   await page.waitForFunction(n => window.__printed > n, was, { timeout: 10000 });
 }
 
+/**
+ * "New comparison" calls location.reload(). Waiting for a selector afterwards
+ * matches the OLD document before navigation even starts, so the next steps
+ * race the reload. window.__printed is set by stubPrint and wiped by the
+ * reload, which makes it a reliable "the new document is up" signal.
+ */
+async function resetApp(page) {
+  await page.click('#resetBtn');
+  await page.waitForFunction(
+    () => window.__printed === undefined && !!document.getElementById('gen'),
+    null, { timeout: 15000 });
+}
+
 /** Open a record and wait for the restore to finish, not just for the click. */
 async function openFromHistory(page, selector = '[data-open]') {
   await page.click(selector);
@@ -810,8 +823,7 @@ test('search filters the saved list by name and address', async ({ browser, orig
   await stubPrint(page);
   await report(page, { '#cName': 'Todd Brown' });
   await printReport(page);
-  await page.click('#resetBtn');
-  await page.waitForSelector('#gen');
+  await resetApp(page);
   await stubPrint(page);
   await report(page, { '#cName': 'Wanda Klassen', '#cAddr': 'Cumberland' });
   await printReport(page);
