@@ -22,10 +22,63 @@ analytics.
    right way round (⇄ Swap if not) and fix any value the parser got wrong.
    Values it could not find are highlighted — type them in.
 4. Fill in client name, address and technician if you want them on the report.
-5. **Generate report**, then **Print / Save as PDF**.
+5. **Generate report**, then **Print / Save as PDF** — which files the report to
+   history on the way to the print dialog.
 
 Print settings: **Scale 100%, Margins Default, Background graphics ON,
 Headers/footers OFF.**
+
+## Saved reports
+
+**Print / Save as PDF** files the report to history and then opens the print
+dialog. Printing the same job again updates that record rather than adding a
+second one; the same customer on a different test date is a separate job and
+gets its own record. **Save to history** does the same without printing.
+
+Records are titled with the client name, falling back to the service address,
+then to `Report — <date>`. Any of them can be renamed, and a renamed record
+keeps its name through later prints. Opening a record restores the full
+editable state — readings, client details, photos — so a mistyped address can
+be corrected and reprinted, not just viewed.
+
+### It is device storage, not a folder
+
+History lives in **IndexedDB — in that browser, on that device**. It is not a
+shared drive and it is not a backup:
+
+- a report saved on the phone is not on the laptop;
+- clearing site data erases it;
+- browsers may evict storage under pressure (the app calls
+  `navigator.storage.persist()` to reduce the odds, which is a request, not a
+  guarantee).
+
+**Export backup** writes the whole history to one JSON file, photos included,
+which can then be kept in Drive or anywhere else. **Import backup** merges a
+file back in, keeping whichever copy of a job is newer. That file is the only
+copy that survives a lost phone — nothing else about this design does. A real
+shared history would need a backend, which would also move customer data off
+the device for the first time.
+
+The File System Access API can write to an actual folder, but it is
+Chrome-desktop only — not available on the Android phones this is used from —
+so it is not an option here.
+
+### Never let storage block printing
+
+A technician standing in a customer's hallway needs the print dialog whether or
+not the save worked. `#printBtn` saves inside a `try`, reports a failure in a
+toast, and calls `window.print()` either way. There is a test for it. Keep it
+that way.
+
+### One job's photos must never reach another job's report
+
+Photographs and client details belong to a single job, but the page persists
+across jobs when the technician does not reload. Once a report has been filed
+(`jobSaved`), the next PDF dropped in clears photos, client name and address —
+technician stays, since that is the same person all day. Without it, back-to-back
+jobs on one phone put one customer's photos on another customer's report. This
+happened during development and only surfaced because a screenshot showed a
+"photos" tag on a job that had none.
 
 ## Things that will bite you if you change the code
 
@@ -183,8 +236,9 @@ in place of the CDN, so it passes offline.
 The suite covers parsing (ligature splits, the per-ton trap, thousands
 separators), upload gating, before/after ordering and swapping, typed
 overrides, metric directionality, benefit copy selection in both directions,
-photo decode/downscale/removal, and the two-page print at several content
-lengths.
+photo decode/downscale/removal, history save/reopen/rename/delete/search,
+backup export and import, storage-failure fallback, cross-job carry-over, and
+the two-page print at several content lengths.
 
 ### The corpus is the weak spot
 
@@ -211,6 +265,9 @@ Closing that gap means collecting real exports:
 
 ## Ideas not yet built
 
-Saved report history per client · multiple techs / login · emailing the report
-from the app · cross-job analytics · custom domain (report.homestarhvac.ca) ·
-bundling pdf.js for offline use · more than one photo pair per report.
+Multiple techs / login · emailing the report from the app · cross-job
+analytics off the stored history · custom domain (report.homestarhvac.ca) ·
+more than one photo pair per report · **installable offline app** (a web app
+manifest plus a service worker would put it on the Android home screen, work
+with no signal, and remove the pdf.js CDN dependency at the same time) ·
+shared history across devices, which needs a backend.

@@ -545,6 +545,309 @@ test('attaching a photo retires the report on screen', async ({ browser, origin 
   await page.close();
 });
 
+/* --------------------------------------------------------------- history */
+
+/** Replace window.print with a counter so the print path can be driven. */
+async function stubPrint(page) {
+  await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+}
+const printed = page => page.evaluate(() => window.__printed);
+const records = page => page.evaluate(() => dbAll());
+
+async function printReport(page) {
+  const was = await printed(page);
+  await page.click('#printBtn');
+  await page.waitForFunction(n => window.__printed > n, was, { timeout: 10000 });
+}
+
+/** Open a record and wait for the restore to finish, not just for the click. */
+async function openFromHistory(page, selector = '[data-open]') {
+  await page.click(selector);
+  await page.waitForFunction(() => {
+    const t = document.querySelector('.toast');
+    return !!t && /^Opened/.test(t.textContent);
+  }, null, { timeout: 10000 });
+}
+
+test('printing saves the report to history and still prints', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+  const recs = await records(page);
+  eq(recs.length, 1, 'one record');
+  eq(recs[0].title, 'Todd Brown', 'titled with the customer name');
+  eq(recs[0].before.totalFlow, 842, 'before measurements stored');
+  eq(recs[0].after.totalFlow, 1164, 'after measurements stored');
+  eq(await printed(page), 1, 'print was called');
+  await page.close();
+});
+
+test('printing the same job twice updates one record, not two', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+  await printReport(page);
+  const recs = await records(page);
+  eq(recs.length, 1, 'still one record');
+  eq(await printed(page), 2, 'printed both times');
+  ok(recs[0].updatedAt >= recs[0].savedAt, 'timestamps make sense');
+  await page.close();
+});
+
+test('the same customer on a later date is a separate record', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+  // Same customer, a return visit six months later.
+  await page.fill('#rvrows input[data-key="date"][data-pos="a"]', '2027-02-11');
+  await page.click('#gen');
+  await printReport(page);
+  const recs = await records(page);
+  eq(recs.length, 2, 'two jobs, two records');
+  await page.close();
+});
+
+test('a storage failure never blocks the print dialog', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await page.evaluate(() => {
+    dbPromise = Promise.reject(new Error('storage unavailable'));
+    dbPromise.catch(() => {});
+  });
+  await printReport(page);
+  eq(await printed(page), 1, 'printed anyway');
+  ok(/Couldn.t save to history/.test(await page.$eval('.toast', e => e.textContent)), 'and said so');
+  await page.close();
+});
+
+test('a saved report reopens with its measurements, details and photos', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await attachPhoto(page, 1, { color: '#123456' });
+  await attachPhoto(page, 2, { color: '#654321' });
+  await page.fill('#cName', 'Todd Brown');
+  await page.fill('#cAddr', '12 Anderton Rd, Comox');
+  await page.fill('#cTech', 'Calvin Windsor');
+  await page.click('#gen');
+  await stubPrint(page);
+  await printReport(page);
+
+  await page.reload();
+  await page.click('#histToggle');
+  await openFromHistory(page);
+
+  eq(await page.$eval('#cName', e => e.value), 'Todd Brown', 'client restored');
+  eq(await page.$eval('#cAddr', e => e.value), '12 Anderton Rd, Comox', 'address restored');
+  eq(await page.$eval('#cTech', e => e.value), 'Calvin Windsor', 'technician restored');
+  eq(await page.$eval('#rvrows input[data-key="totalFlow"][data-pos="a"]', e => e.value), '1164', 'readings restored');
+  eq(await page.$$eval('.shot img', els => els.length), 2, 'both photos restored');
+  ok(await page.$eval('.shot img', e => e.src.startsWith('data:image/jpeg')), 'photos came back as images');
+  ok(/1,164/.test(await page.$eval('.hcell', e => e.textContent)), 'the report re-rendered');
+  await page.close();
+});
+
+test('a reopened report can be corrected and reprinted without duplicating', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+
+  await page.click('#histToggle');
+  await openFromHistory(page);
+  await page.fill('#cAddr', '12 Anderton Rd, Comox');   // the correction
+  await page.click('#gen');
+  await printReport(page);
+
+  const recs = await records(page);
+  eq(recs.length, 1, 'still one record');
+  eq(recs[0].addr, '12 Anderton Rd, Comox', 'the correction was kept');
+  await page.close();
+});
+
+test('history titles fall back to address, then to a dated name', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cAddr': '12 Anderton Rd, Comox' });
+  await stubPrint(page);
+  await printReport(page);
+  eq((await records(page))[0].title, '12 Anderton Rd, Comox', 'address used');
+
+  const page2 = await openApp(browser, origin);
+  await report(page2);
+  await stubPrint(page2);
+  await printReport(page2);
+  const t = (await records(page2)).find(r => /^Report — /.test(r.title));
+  ok(t, 'a dated fallback title was used when there is nothing else');
+  await page2.close();
+  await page.close();
+});
+
+test('a renamed report keeps its name through the next print', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+  page.once('dialog', d => d.accept('Brown — furnace + duct seal'));
+  await page.click('#histToggle');
+  await page.click('[data-rename]');
+  await page.waitForFunction(() => document.querySelector('.hname').textContent.startsWith('Brown —'));
+  await printReport(page);
+  const recs = await records(page);
+  eq(recs.length, 1, 'one record');
+  eq(recs[0].title, 'Brown — furnace + duct seal', 'the chosen name survived');
+  await page.close();
+});
+
+test('deleting asks first, then removes the record', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+  await page.click('#histToggle');
+
+  page.once('dialog', d => d.dismiss());
+  await page.click('[data-del]');
+  eq((await records(page)).length, 1, 'a cancelled delete keeps the record');
+
+  page.once('dialog', d => d.accept());
+  await page.click('[data-del]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-del]').length === 0);
+  eq((await records(page)).length, 0, 'confirmed delete removes it');
+  await page.close();
+});
+
+test('search filters the saved list by name and address', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await stubPrint(page);
+  await report(page, { '#cName': 'Todd Brown' });
+  await printReport(page);
+  await page.click('#resetBtn');
+  await page.waitForSelector('#gen');
+  await stubPrint(page);
+  await report(page, { '#cName': 'Wanda Klassen', '#cAddr': 'Cumberland' });
+  await printReport(page);
+
+  await page.click('#histToggle');
+  eq(await page.$$eval('.hname', els => els.length), 2, 'both listed');
+  await page.fill('#histSearch', 'klass');
+  eq(await page.$$eval('.hname', els => els.map(e => e.textContent)), ['Wanda Klassen'], 'filtered by name');
+  await page.fill('#histSearch', 'cumberland');
+  eq(await page.$$eval('.hname', els => els.map(e => e.textContent)), ['Wanda Klassen'], 'filtered by address');
+  await page.fill('#histSearch', 'zzz');
+  ok(/No report matches/.test(await page.$eval('#histList', e => e.textContent)), 'says so when nothing matches');
+  await page.close();
+});
+
+test('history exports to a backup file and imports back into an empty device', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await attachPhoto(page, 1);
+  await page.click('#gen');
+  await stubPrint(page);
+  await printReport(page);
+
+  await page.click('#histToggle');
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#histExport'),
+  ]);
+  const path = await download.path();
+  const backup = JSON.parse(fs.readFileSync(path, 'utf8'));
+  eq(backup.app, 'homestar-performance-report', 'tagged as ours');
+  eq(backup.reports.length, 1, 'one report in the backup');
+  ok(backup.reports[0].photoBefore.startsWith('data:image/jpeg'), 'photo travels with it');
+
+  // A different device: fresh context, empty database.
+  const fresh = await openApp(browser, origin);
+  eq((await records(fresh)).length, 0, 'starts empty');
+  await fresh.setInputFiles('#histImport', { name: 'backup.json', mimeType: 'application/json', buffer: fs.readFileSync(path) });
+  await fresh.waitForFunction(() => document.querySelectorAll('.hname').length === 1, null, { timeout: 10000 });
+  const restored = await records(fresh);
+  eq(restored.length, 1, 'restored');
+  eq(restored[0].title, 'Todd Brown', 'with its title');
+  eq(restored[0].after.totalFlow, 1164, 'with its readings');
+  await fresh.close();
+  await page.close();
+});
+
+test('importing a file that is not a backup is refused, not swallowed', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await page.click('#histToggle').catch(() => {});
+  await page.setInputFiles('#histImport', { name: 'x.json', mimeType: 'application/json', buffer: Buffer.from('{"hello":1}') });
+  await page.waitForSelector('.toast');
+  ok(/isn.t a Homestar backup/.test(await page.$eval('.toast', e => e.textContent)), 'told the user');
+  eq((await records(page)).length, 0, 'nothing was written');
+  await page.close();
+});
+
+test('Save to history saves without printing', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await page.click('#saveBtn');
+  await page.waitForSelector('.toast');
+  eq((await records(page)).length, 1, 'saved');
+  eq(await printed(page), 0, 'did not print');
+  await page.close();
+});
+
+test('the next job does not inherit the last customer photos or details', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await attachPhoto(page, 1);
+  await attachPhoto(page, 2);
+  await page.fill('#cName', 'Todd Brown');
+  await page.fill('#cAddr', '12 Anderton Rd, Comox');
+  await page.fill('#cTech', 'Calvin Windsor');
+  await page.click('#gen');
+  await stubPrint(page);
+  await printReport(page);
+
+  // Straight on to the next job without reloading.
+  await upload(page, 1, trueFlowPdf({ ...BEFORE, date: '2026-08-22' }));
+  eq(await page.evaluate(() => [photos[1], photos[2]]), [null, null], 'photos cleared');
+  eq(await page.$eval('#cName', e => e.value), '', 'client name cleared');
+  eq(await page.$eval('#cAddr', e => e.value), '', 'address cleared');
+  eq(await page.$eval('#cTech', e => e.value), 'Calvin Windsor', 'technician kept — same person all day');
+  ok(!(await page.$eval('#p1', e => e.classList.contains('set'))), 'photo picker reset');
+
+  await upload(page, 2, trueFlowPdf({ ...AFTER, date: '2026-08-22' }));
+  await page.fill('#cName', 'Wanda Klassen');
+  await page.click('#gen');
+  await printReport(page);
+  const recs = await records(page);
+  eq(recs.length, 2, 'two jobs on file');
+  const wanda = recs.find(r => r.title === 'Wanda Klassen');
+  eq([wanda.photoBefore, wanda.photoAfter], [null, null], "the second customer has none of the first's photos");
+  await page.close();
+});
+
+test('mid-setup uploads do not wipe work in progress', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await upload(page, 1, before);
+  await attachPhoto(page, 1);
+  await page.fill('#cName', 'Todd Brown');
+  await upload(page, 2, after);          // second PDF arrives after the photo and name
+  ok(await page.evaluate(() => !!photos[1]), 'photo survived');
+  eq(await page.$eval('#cName', e => e.value), 'Todd Brown', 'name survived');
+  await page.close();
+});
+
+test('the history card stays off the printed page', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin);
+  await report(page, { '#cName': 'Todd Brown' });
+  await stubPrint(page);
+  await printReport(page);
+  await page.emulateMedia({ media: 'print' });
+  eq(await page.$eval('#histCard', e => getComputedStyle(e).display), 'none', 'history hidden when printing');
+  await page.close();
+});
+
 /* ----------------------------------------------------------------- print */
 
 test('the report prints on exactly two Letter pages', async ({ browser, origin }) => {
