@@ -291,14 +291,19 @@ function conditionsPanel(phase){
   </div>`;
 }
 
+/** Before down the left, after down the right — the same reading order the
+    rest of the report uses. Columns are pinned so one empty side cannot slide
+    the other across. */
 function capShots(){
-  const gallery = (list, label) => !list.length ? '' : `
-    <div class="capgal">
+  if (!CAP.photos.before.length && !CAP.photos.after.length) return '';
+  const col = (list, label, cls) => !list.length ? '' : `
+    <div class="capcol ${cls}">
       <div class="capgt">${label}</div>
-      <div class="capgrid">${list.map(src => `<div class="capshot"><img src="${src}" alt="${label}"></div>`).join('')}</div>
+      ${list.map(src => `<div class="capshot"><img src="${src}" alt="${label}"></div>`).join('')}
     </div>`;
-  const out = gallery(CAP.photos.before, 'Before') + gallery(CAP.photos.after, 'After');
-  return out ? `<section><div class="sh">Before &amp; After</div>${out}</section>` : '';
+  return `<section><div class="sh">Before &amp; After</div>
+    <div class="capcols">${col(CAP.photos.before, 'Before', 'before')}${col(CAP.photos.after, 'After', 'after')}</div>
+  </section>`;
 }
 
 /** @param {boolean} breakFirst start on a fresh sheet (combination reports). */
@@ -364,7 +369,7 @@ function capacityShell(){
   const modeLabel = CAP.mode ? CAP.mode[0].toUpperCase() + CAP.mode.slice(1) : '';
   const temps = [CAP.outdoor.tempBefore, CAP.outdoor.tempAfter].filter(Boolean);
   return reportShell({
-    title: 'Maintenance Capacity Report',
+    title: 'System Capacity Report',
     verify: 'Delivered heating and cooling capacity was measured with Testo Smart Probes at the return and supply of each indoor unit, before and after the maintenance performed by Homestar HVAC Solutions.',
     meta: [
       {l: 'Date', v: new Date().toISOString().slice(0, 10)},

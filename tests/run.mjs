@@ -1365,6 +1365,50 @@ test('mode falls back to supply alone, and a manual choice stops the detection',
 
 /* ---- the report ---- */
 
+test('an after-only photo set still sits in the right-hand column', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await addCapacityPhotos(page, 'after', 2);
+  await page.click('#gen');
+  eq(await page.$$eval('.capcol', els => els.map(e => e.className.replace('capcol ', ''))), ['after'], 'only the after column');
+  eq(await page.$eval('.capcol.after', e => getComputedStyle(e).gridColumnStart), '2',
+    'and it stays on the right rather than sliding left');
+  await page.close();
+});
+
+test('the capacity report is titled System Capacity Report', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const h = await page.$eval('#sheet h2', e => e.textContent);
+  ok(/System Capacity Report/.test(h), `got "${h}"`);
+  ok(!/Maintenance Capacity/.test(h), 'the old name is gone');
+  await page.close();
+});
+
+test('the technician defaults to Calvin Windsor', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  eq(await page.$eval('#cTech', e => e.value), 'Calvin Windsor', 'prefilled');
+  await page.close();
+});
+
+/* The action row and the connection notices have both leaked onto paper by
+   sitting outside .tool. Printing is now "the report and nothing else", and
+   this checks the printed page itself rather than any one selector. */
+test('no page controls reach the printed report, in any report type', async ({ browser, origin }) => {
+  for (const type of ['airflow', 'capacity', 'combination']) {
+    const page = await openApp(browser, origin, { reportType: type });
+    if (type !== 'capacity') { await upload(page, 1, before); await upload(page, 2, after); }
+    if (type !== 'airflow') await setCapacity(page, CAP_JOB);
+    await page.click('#gen');
+    const printed = (await pageTexts(await page.pdf(LETTER))).join(' ');
+    for (const control of ['Generate report', 'Generate combined report', 'Change report type',
+                           'Print / Save as PDF', 'Save to history', 'New comparison',
+                           'Saved reports', 'Confirm & correct', 'Update available']) {
+      ok(!printed.includes(control), `"${control}" printed on the ${type} report`);
+    }
+    await page.close();
+  }
+});
+
 test('the capacity report totals the heads and compares them with the rated figure', async ({ browser, origin }) => {
   const page = await capPage(browser, origin);
   await page.click('#gen');
@@ -1422,9 +1466,12 @@ test('multiple before and after photos render as labelled galleries', async ({ b
   await addCapacityPhotos(page, 'before', 3);
   await addCapacityPhotos(page, 'after', 2);
   await page.click('#gen');
-  eq(await page.$$eval('.capgal', els => els.map(e => e.querySelector('.capgt').textContent)),
-    ['Before', 'After'], 'two galleries');
-  eq(await page.$$eval('.capshot img', els => els.length), 5, 'all five photos');
+  eq(await page.$$eval('.capcol', els => els.map(e => e.querySelector('.capgt').textContent)),
+    ['Before', 'After'], 'two columns');
+  eq(await page.$$eval('.capcol.before .capshot img', els => els.length), 3, 'before photos on the left');
+  eq(await page.$$eval('.capcol.after .capshot img', els => els.length), 2, 'after photos on the right');
+  const cols = await page.$$eval('.capcol', els => els.map(e => getComputedStyle(e).gridColumnStart));
+  eq(cols, ['1', '2'], 'before is column one, after is column two');
   await page.close();
 });
 
