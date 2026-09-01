@@ -51,8 +51,12 @@ export async function serve(root = ROOT) {
  *   every other test's routing and timing nondeterministic.
  * @param {boolean} [opts.breakPdfjs] Serve a 404 for the vendored pdf.js, to
  *   exercise the "part of the app is missing" path.
+ * @param {string|null} [opts.reportType] Which report to pick on the chooser.
+ *   Defaults to the airflow flow, which is what most tests are about; pass
+ *   null to land on the chooser itself.
  */
-export async function openApp(browser, origin, { serviceWorker = false, breakPdfjs = false } = {}) {
+export async function openApp(browser, origin,
+    { serviceWorker = false, breakPdfjs = false, reportType = 'airflow' } = {}) {
   const context = await browser.newContext({
     serviceWorkers: serviceWorker ? 'allow' : 'block',
     acceptDownloads: true,
@@ -66,6 +70,10 @@ export async function openApp(browser, origin, { serviceWorker = false, breakPdf
   if (breakPdfjs) await page.route('**/vendor/pdf.min.js', route => route.abort('failed'));
 
   await page.goto(origin + '/index.html', { waitUntil: 'load' });
+  if (reportType) {
+    await page.click(`[data-rt="${reportType}"]`);
+    await page.waitForSelector('#actions:not([hidden])');
+  }
   page.pageErrors = errors;
   return page;
 }
@@ -147,6 +155,12 @@ export async function launch() {
   return chromium.launch({ executablePath: resolveChromium() });
 }
 
+/** Choose a report type on the chooser (also needed again after a reload). */
+export async function pickReport(page, type = 'airflow') {
+  await page.click(`[data-rt="${type}"]`);
+  await page.waitForSelector('#actions:not([hidden])');
+}
+
 /** Feed a generated PDF into one of the two upload slots and wait for the result. */
 export async function upload(page, slot, buffer, name = `slot${slot}.pdf`) {
   await page.setInputFiles(`#f${slot}`, { name, mimeType: 'application/pdf', buffer });
@@ -213,6 +227,61 @@ export async function dataUrlSize(page, url) {
     i.onload = () => res({ w: i.naturalWidth, h: i.naturalHeight });
     i.src = u;
   }), url);
+}
+
+/** Fill the capacity side directly, for tests that are about the report. */
+export async function setCapacity(page, spec) {
+  await page.evaluate(s => {
+    setHeadCount(s.heads.length);
+    s.heads.forEach((h, i) => {
+      const head = CAP.heads[i];
+      head.location = h.location || '';
+      head.locationOther = h.locationOther || '';
+      head.unitType = h.unitType || 'Wall mount';
+      head.model = h.model || '';
+      head.serial = h.serial || '';
+      Object.assign(head.before, h.before || {});
+      Object.assign(head.after, h.after || {});
+    });
+    Object.assign(CAP.outdoor, s.outdoor || {});
+    for (const el of document.getElementById('capOut').querySelectorAll('[data-out]')) {
+      el.value = CAP.outdoor[el.dataset.out] || '';
+    }
+    CAP.open = -1;
+    renderHeads();
+    setStatus();
+  }, spec);
+}
+
+/** Attach generated images to a capacity photo gallery. */
+export async function addCapacityPhotos(page, phase, count, dims = { w: 800, h: 600 }) {
+  await page.evaluate(async ({ phase, count, dims }) => {
+    for (let i = 0; i < count; i++) {
+      const c = document.createElement('canvas');
+      c.width = dims.w; c.height = dims.h;
+      const x = c.getContext('2d');
+      x.fillStyle = `hsl(${i * 60}, 30%, 55%)`;
+      x.fillRect(0, 0, c.width, c.height);
+      CAP.photos[phase].push(c.toDataURL('image/jpeg', 0.85));
+    }
+    capPhotoThumbs(phase);
+  }, { phase, count, dims });
+}
+
+/**
+ * Text of each printed page, from the real paginated PDF. Lets a test assert
+ * that a block did not get cut across a break — which a page count alone
+ * cannot catch.
+ */
+export async function pageTexts(buffer) {
+  const pdfjs = nodePdfjs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), verbosity: 0 }).promise;
+  const out = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const c = await (await doc.getPage(i)).getTextContent();
+    out.push(c.items.map(o => o.str).join(' ').replace(/\s+/g, ' ').trim());
+  }
+  return out;
 }
 
 /** Page count of a rendered PDF buffer, read with pdf.js in node. */

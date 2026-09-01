@@ -17,6 +17,7 @@ const values = {1:{},   2:{}};
 let order = [1,2];        // order[0] = the "before" slot, order[1] = the "after" slot
 let userOrdered = false;  // true once the tech has hit Swap — stop re-deriving from dates
 let jobSaved = false;     // this job has been printed or saved; the next upload starts a new one
+let reportType = 'airflow';  // airflow | capacity | combination — set by the chooser
 
 const METRICS = [
   {key:'totalFlow',    name:'Total Airflow',                    unit:'SCFM',       dir:'up',   dp:0},

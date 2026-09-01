@@ -23,6 +23,7 @@
     --bad:#B23A2B;  --bad-bg:#FBEAE7;  --bad-ln:#EEC3BB;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}
   html,body{margin:0}
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -134,6 +135,124 @@
   .plink{position:absolute; top:5px; right:6px; z-index:1; display:none; border:0; background:none; padding:7px 9px; font-family:inherit; font-size:12px; font-weight:650; color:var(--slate); cursor:pointer; text-decoration:underline}
   .pdrop.set + .plink{display:inline-block}
   .plink:hover{color:var(--bad)}
+
+
+  /* ---------- Report chooser ---------- */
+  .pick{display:block; width:100%; text-align:left; border:1.5px solid var(--line); background:#fff;
+        border-radius:12px; padding:14px 15px; margin-bottom:10px; font-family:inherit; cursor:pointer; min-height:64px}
+  .pick:hover{border-color:var(--blue); background:#F5F9FD}
+  .pick .t{display:block; font-size:15.5px; font-weight:700; color:var(--ink)}
+  .pick .d{display:block; font-size:12.5px; color:var(--slate); margin-top:2px}
+
+  /* ---------- Capacity entry ---------- */
+  .rowline{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px}
+  .chip{display:inline-flex; align-items:center; gap:7px; background:var(--good-bg); border:1px solid var(--good-ln);
+        color:var(--good); font-size:13px; font-weight:700; padding:8px 12px; border-radius:20px}
+  .chip.unknown{background:var(--line2); border-color:var(--line); color:var(--slate)}
+  .link{border:0; background:none; color:var(--blue); font-size:13px; font-weight:650;
+        text-decoration:underline; font-family:inherit; padding:8px 2px; cursor:pointer}
+  .sh2.capsec{font-size:11px; font-weight:700; letter-spacing:.07em; color:var(--faint);
+              text-transform:uppercase; margin:18px 0 10px}
+  .capfld{margin-bottom:12px}
+  .capfld label{display:block; font-size:11px; font-weight:700; letter-spacing:.04em; color:var(--faint);
+                text-transform:uppercase; margin-bottom:5px}
+  .capfld label .pr{color:var(--blue); font-weight:800}
+  .capfld input,.capfld select,#capCount{width:100%; min-height:48px; padding:11px 12px; border:1px solid var(--line);
+        border-radius:9px; font-size:16px; font-family:inherit; color:var(--ink); background:#fff}
+  .capfld input:focus,.capfld select:focus{outline:2px solid var(--blue); outline-offset:-1px; border-color:var(--blue)}
+  .captwo{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  @media(max-width:400px){.captwo{grid-template-columns:1fr}}
+
+  .caphd{border:1px solid var(--line); border-radius:12px; margin-bottom:10px; background:#fff; overflow:hidden}
+  .caphd.open{border-color:var(--blue); border-width:2px}
+  .caphbar{display:flex; align-items:center; gap:11px; padding:13px 14px; cursor:pointer; min-height:60px}
+  .capnum{flex:0 0 26px; height:26px; border-radius:50%; background:var(--line2); color:var(--slate);
+          font-size:13px; font-weight:800; display:flex; align-items:center; justify-content:center}
+  .caphd.done .capnum{background:var(--good); color:#fff}
+  .caphd.open .capnum{background:var(--blue); color:#fff}
+  .caphmain{flex:1; min-width:0}
+  .caphname{font-size:14.5px; font-weight:700}
+  .caphd.pending .caphname{color:var(--faint)}
+  .caphsub{font-size:12px; color:var(--slate); margin-top:1px}
+  .caphsub b.g{color:var(--good)} .caphsub b.b{color:var(--bad)} .caphsub b.n{color:var(--slate)}
+  .capchev{color:var(--faint); font-size:13px}
+  .caphbody{padding:4px 14px 15px; border-top:1px solid var(--line2)}
+  .capmore{margin:2px 0 10px}
+  .capmore summary{cursor:pointer; font-size:13px; color:var(--blue); font-weight:650; padding:9px 2px}
+  .capsub{margin-top:8px}
+  .capsubh{font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+           color:var(--faint); margin:6px 0 8px}
+  .capbtn{width:100%; min-height:50px; border:0; border-radius:11px; background:var(--blue); color:#fff;
+          font-size:15.5px; font-weight:700; font-family:inherit; cursor:pointer; margin-top:4px}
+  .capbtn:hover{background:var(--blue-d)}
+
+  .capphotos{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  @media(max-width:560px){.capphotos{grid-template-columns:1fr}}
+  .capgh{font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); margin-bottom:7px}
+  .capthumbs{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-bottom:8px}
+  .capthumb{position:relative}
+  .capthumb img{display:block; width:100%; height:62px; object-fit:cover; border-radius:7px; background:var(--line2)}
+  .capx{position:absolute; top:2px; right:2px; width:24px; height:24px; border:0; border-radius:50%;
+        background:rgba(15,42,67,.72); color:#fff; font-size:15px; line-height:1; cursor:pointer; font-family:inherit}
+  .capadd{display:block; border:1.5px dashed var(--line); border-radius:10px; padding:13px; text-align:center;
+          font-size:13px; font-weight:650; color:var(--slate); cursor:pointer; background:#FBFCFD}
+  .capadd:hover{border-color:var(--blue); color:var(--blue)}
+
+  /* ---------- Capacity report ---------- */
+  .caphero{display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid var(--line); border-radius:12px; overflow:hidden}
+  @media(max-width:640px){.caphero{grid-template-columns:1fr}}
+  .capcell{padding:18px 20px; border-right:1px solid var(--line2)}
+  .capcell:last-child{border-right:0}
+  .capcell .hl{font-size:12px; font-weight:650; color:var(--slate)}
+  .capcell .ba{font-size:12.5px; color:var(--faint); margin:8px 0 2px}
+  .capcell .ba b{color:var(--ink); font-weight:700}
+  .capcell .hbig{display:flex; align-items:baseline; gap:8px; margin-top:4px}
+  .capcell .pct{font-size:30px; font-weight:800; letter-spacing:-.02em}
+  .capcell .ar{font-size:20px; font-weight:800}
+  .capcell .verdict{margin-top:5px; font-size:12px; font-weight:650}
+  .capcell.g .pct,.capcell.g .ar,.capcell.g .verdict{color:var(--good)}
+  .capcell.b .pct,.capcell.b .ar,.capcell.b .verdict{color:var(--bad)}
+  .capcell.n .pct,.capcell.n .ar,.capcell.n .verdict{color:var(--slate)}
+
+  .capcard{padding:13px 0; border-bottom:1px solid var(--line2)}
+  .capcard:last-child{border-bottom:0}
+  .capcardn{font-size:14.5px; font-weight:700}
+  .capcardi{font-size:11.5px; color:var(--faint); margin:1px 0 9px}
+  .capbars{display:grid; grid-template-columns:52px 1fr 92px; gap:8px 12px; align-items:center}
+  .capbl{font-size:11px; font-weight:700; letter-spacing:.04em; color:var(--faint); text-transform:uppercase}
+  .captrack{height:20px; background:var(--line2); border-radius:5px; overflow:hidden}
+  .capfill{height:100%; border-radius:5px}
+  .capfill.base{background:#B9C6D1}
+  .capfill.g{background:var(--good)} .capfill.b{background:var(--bad)} .capfill.n{background:var(--slate)}
+  .capval{font-size:13px; font-weight:700; text-align:right}
+  .capdelta{font-size:12.5px; font-weight:750; margin-top:7px}
+  .capdelta.g{color:var(--good)} .capdelta.b{color:var(--bad)} .capdelta.n{color:var(--slate)}
+
+  .capvs{border:1px solid var(--line); border-radius:11px; padding:4px 14px}
+  .capvsr{display:flex; justify-content:space-between; gap:14px; padding:9px 0;
+          border-bottom:1px solid var(--line2); font-size:13px}
+  .capvsr:last-child{border-bottom:0}
+  .capvsr span{color:var(--slate)}
+  .capvsr b{font-weight:700}
+  .capvsr.total b.g{color:var(--good)} .capvsr.total b.n{color:var(--slate)}
+  .capnote{font-size:11.5px; color:var(--slate); line-height:1.5; margin-top:9px; max-width:80ch}
+
+  .cappanel{border:1px solid var(--line); border-radius:11px; overflow:hidden}
+  .cappt{font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:8px 14px; color:#fff}
+  .cappanel.before .cappt{background:var(--slate)}
+  .cappanel.after .cappt{background:var(--blue)}
+  .capdl{padding:10px 14px}
+  .caprow{padding:5px 0; border-bottom:1px solid var(--line2); font-size:12px}
+  .caprow:last-child{border-bottom:0}
+  .caprk{display:block; font-weight:700}
+  .caprv{display:block; color:var(--slate)}
+
+  .capgal{margin-bottom:12px}
+  .capgal:last-child{margin-bottom:0}
+  .capgt{font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--faint); margin-bottom:7px}
+  .capgrid{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .capshot{border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  .capshot img{display:block; width:100%; height:220px; object-fit:contain; background:#F4F6F8}
 
   /* ---------- Report ---------- */
   #report{display:none}
@@ -248,7 +367,7 @@
     @page{ size: letter portrait; margin: 0.5in; }
     html,body{background:#fff}
     .wrap{max-width:none; padding:0}
-    .report-actions,.hist,.toast{display:none !important}
+    .report-actions,.hist,.toast,.strip{display:none !important}
     body.has-report .tool{display:none !important}
     body.has-report #report{display:block !important}
     .sheet{border:0; border-radius:0}
@@ -307,10 +426,51 @@
 
     .metric,.hcell,.panel,.rhead,.hero,.ben,.bcomp .row,.shot{break-inside:avoid}
   }
+
+  /* Capacity print rules live in their own block and only ever match
+     cap-prefixed classes, so nothing here can reach the airflow report. */
+  @media print{
+    .capbreak{break-before:page; page-break-before:always; border-top:0 !important; padding-top:0}
+    .caphero{border-radius:8px}
+    .capcell{padding:7px 13px}
+    .capcell .hl{font-size:11px}
+    .capcell .ba{font-size:11.5px; margin:3px 0 2px}
+    .capcell .hbig{margin-top:2px}
+    .capcell .pct{font-size:20px}
+    .capcell .ar{font-size:15px}
+    .capcell .verdict{font-size:11px; margin-top:2px}
+    .capcard{padding:7px 0}
+    .capcardn{font-size:12.5px}
+    .capcardi{font-size:10.5px; margin:1px 0 5px}
+    .capbars{gap:3px 12px; grid-template-columns:50px 1fr 88px}
+    .captrack{height:11px}
+    .capbl{font-size:10px}
+    .capval{font-size:12px}
+    .capdelta{font-size:11.5px; margin-top:4px}
+    .capvs{padding:2px 12px}
+    .capvsr{padding:5px 0; font-size:11.5px}
+    .capnote{font-size:10px; line-height:1.4; margin-top:6px; max-width:none}
+    .cappt{padding:5px 13px; font-size:10px}
+    .capdl{padding:6px 12px}
+    .caprow{padding:3px 0; font-size:10.5px}
+    .capgt{font-size:10px; margin-bottom:5px}
+    .capshot img{height:210px}
+    /* Nothing in the capacity report may be cut across a page break. */
+    .capcard,.capcell,.caprow,.capvs,.cappanel,.capshot,.capgal,.caphero{break-inside:avoid; page-break-inside:avoid}
+    .sh{break-after:avoid; page-break-after:avoid}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
+
+  <div class="strip off" id="offlineStrip" hidden>
+    <span><b>Offline.</b> Everything still works — reports are read and saved on this device.</span>
+  </div>
+  <div class="strip upd" id="updateStrip" hidden>
+    <span><b>Update available.</b> Reload when you're between jobs.</span>
+    <button class="plink2" type="button" id="updateNow">Reload now</button>
+  </div>
 
   <!-- SAVED REPORTS -->
   <div class="tool hist" id="histCard" hidden>
@@ -330,17 +490,22 @@
     </div>
   </div>
 
+  <!-- REPORT CHOOSER -->
+  <div class="tool" id="chooser">
+    <h1>New report</h1>
+    <p>What are you documenting on this job?</p>
+    <button class="pick" type="button" data-rt="airflow">
+      <span class="t">Airflow</span><span class="d">TrueFlow before &amp; after · ducted</span></button>
+    <button class="pick" type="button" data-rt="capacity">
+      <span class="t">Capacity</span><span class="d">Testo before &amp; after · ductless, or ducted capacity only</span></button>
+    <button class="pick" type="button" data-rt="combination">
+      <span class="t">Combination</span><span class="d">Both, in one document</span></button>
+  </div>
+
   <!-- UPLOADER -->
-  <div class="tool" id="tool">
+  <div class="tool" id="tool" hidden>
     <h1>System Performance Verification</h1>
     <p>Upload the before and after TrueFlow reports. Data is read on this device — nothing is uploaded anywhere.</p>
-    <div class="strip off" id="offlineStrip" hidden>
-      <span><b>Offline.</b> Everything still works — reports are read and saved on this device.</span>
-    </div>
-    <div class="strip upd" id="updateStrip" hidden>
-      <span><b>Update available.</b> Reload when you're between jobs.</span>
-      <button class="plink2" type="button" id="updateNow">Reload now</button>
-    </div>
     <div class="banner" id="loadWarn" hidden>
       <b>PDF reader didn't load.</b>
       Part of the app is missing. Reload the page — if it keeps happening, reinstall it from the browser.
@@ -378,12 +543,6 @@
       </div>
     </div>
 
-    <div class="fields">
-      <div><label>Client name (optional)</label><input id="cName" placeholder="e.g. Todd Brown"></div>
-      <div><label>Service address (optional)</label><input id="cAddr" placeholder="Street, city"></div>
-      <div><label>Technician</label><input id="cTech" placeholder="Name on the report"></div>
-    </div>
-
     <div class="review" id="review" hidden>
       <div class="rvtop">
         <div class="sh2">Confirm &amp; correct</div>
@@ -398,10 +557,72 @@
       <div id="rvrows"></div>
     </div>
 
-    <div class="row-actions">
-      <button class="btn btn-p" id="gen" disabled>Generate report</button>
-      <span class="hint" id="status">Waiting for two reports.</span>
+  </div>
+
+  <!-- CAPACITY -->
+  <div class="tool" id="capCard" hidden>
+    <h1>Capacity verification</h1>
+    <p>Delivered capacity, before and after, from the Testo probes.</p>
+
+    <div class="rowline">
+      <span class="chip" id="capModeChip">Mode not detected yet</span>
+      <button class="link" type="button" id="capModeSwitch">Switch to cooling</button>
     </div>
+
+    <div class="fields">
+      <div><label>Indoor units</label>
+        <select id="capCount">
+          <option value="1">1 head</option><option value="2">2 heads</option>
+          <option value="3">3 heads</option><option value="4">4 heads</option>
+          <option value="5">5 heads</option>
+        </select></div>
+    </div>
+
+    <div class="sh2 capsec">Indoor units</div>
+    <div id="capHeads"></div>
+
+    <div class="sh2 capsec">Outdoor unit</div>
+    <div id="capOut">
+      <div class="capfld"><label>Model</label><input data-out="model" placeholder="Paste or type"></div>
+      <div class="capfld"><label>Serial</label><input data-out="serial" placeholder="Paste or type"></div>
+      <div class="capfld"><label>Rated capacity at the logged outdoor temp &amp; mode</label>
+        <input data-out="rated" inputmode="numeric" placeholder="BTU/h"></div>
+      <div class="captwo">
+        <div class="capfld"><label>Outdoor °F before</label><input data-out="tempBefore" inputmode="decimal" placeholder="—"></div>
+        <div class="capfld"><label>Outdoor °F after</label><input data-out="tempAfter" inputmode="decimal" placeholder="—"></div>
+      </div>
+    </div>
+
+    <div class="sh2 capsec">Photos</div>
+    <div class="capphotos">
+      <div class="capgrp">
+        <div class="capgh">Before <span id="capNb"></span></div>
+        <div class="capthumbs" id="capTb"></div>
+        <label class="capadd"><input type="file" accept="image/*" multiple hidden id="capFb">＋ Add before photos</label>
+      </div>
+      <div class="capgrp">
+        <div class="capgh">After <span id="capNa"></span></div>
+        <div class="capthumbs" id="capTa"></div>
+        <label class="capadd"><input type="file" accept="image/*" multiple hidden id="capFa">＋ Add after photos</label>
+      </div>
+    </div>
+    <p class="hint" id="capStatus"></p>
+  </div>
+
+  <div class="tool" id="clientCard" hidden>
+    <h1>Client &amp; technician</h1>
+    <p>Shown on the report header.</p>
+    <div class="fields">
+      <div><label>Client name (optional)</label><input id="cName" placeholder="e.g. Todd Brown"></div>
+      <div><label>Service address (optional)</label><input id="cAddr" placeholder="Street, city"></div>
+      <div><label>Technician</label><input id="cTech" placeholder="Name on the report"></div>
+    </div>
+  </div>
+
+  <div class="row-actions" id="actions" hidden>
+    <button class="btn btn-p" id="gen" disabled>Generate report</button>
+    <button class="btn btn-s" type="button" id="rtBack">Change report type</button>
+    <span class="hint" id="status">Waiting for two reports.</span>
   </div>
 
   <!-- REPORT -->
@@ -420,6 +641,7 @@
 <script src="./app/parser.js"></script>
 <script src="./app/intake.js"></script>
 <script src="./app/report.js"></script>
+<script src="./app/capacity.js"></script>
 <script src="./app/history.js"></script>
 <script src="./app/pwa.js"></script>
 </body>

@@ -41,8 +41,13 @@ if ('serviceWorker' in navigator){
       });
     }).catch(err=>console.warn('offline mode unavailable:', err));
 
+    // The first install claims the page, which also fires controllerchange —
+    // that is the app becoming available offline, not a new version taking
+    // over, and reloading there would bounce the page on every first visit.
+    let hadController = !!navigator.serviceWorker.controller;
     let reloading = false;
     navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+      if (!hadController){ hadController = true; return; }
       if (reloading) return;
       reloading = true;
       location.reload();

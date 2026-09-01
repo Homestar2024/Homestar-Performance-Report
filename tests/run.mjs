@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, ROOT } from './lib/harness.mjs';
+import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, pickReport, setCapacity, addCapacityPhotos, pageTexts, ROOT } from './lib/harness.mjs';
 import { trueFlowPdf, unrelatedPdf, BEFORE, AFTER } from './lib/make-pdf.mjs';
 
 const LETTER = { format: 'Letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } };
@@ -656,6 +656,7 @@ async function resetApp(page) {
   await page.waitForFunction(
     () => window.__printed === undefined && !!document.getElementById('gen'),
     null, { timeout: 15000 });
+  await pickReport(page);
 }
 
 /**
@@ -1088,6 +1089,8 @@ test('the page links the manifest and declares a theme colour', async ({ browser
 test('the service worker installs and caches everything the app needs', async ({ browser, origin }) => {
   const page = await openApp(browser, origin, { serviceWorker: true });
   await swReady(page);
+  // A first install must not bounce the page; if it did, this would be > 0.
+  eq(await page.evaluate(() => performance.getEntriesByType('navigation').length), 1, 'no reload on first install');
   const cached = await cachedPaths(page);
   for (const want of ['/index.html', '/vendor/pdf.min.js', '/vendor/pdf.worker.min.js',
                       '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png',
@@ -1103,6 +1106,7 @@ test('the app loads with the network cut', async ({ browser, origin }) => {
   await swReady(page);
   await page.appContext.setOffline(true);
   await page.reload({ waitUntil: 'load' });
+  await pickReport(page);
   ok(await page.$('#gen'), 'the uploader is there');
   eq(await page.evaluate(() => typeof pdfjsLib), 'object', 'pdf.js loaded from cache');
   await page.appContext.setOffline(false);
@@ -1114,6 +1118,7 @@ test('a report can be produced and filed with no signal at all', async ({ browse
   await swReady(page);
   await page.appContext.setOffline(true);
   await page.reload({ waitUntil: 'load' });
+  await pickReport(page);
 
   await upload(page, 1, before);
   await upload(page, 2, after);
@@ -1137,6 +1142,7 @@ test('the write-ups choose the right wording with the network cut', async ({ bro
   await swReady(page);
   await page.appContext.setOffline(true);
   await page.reload({ waitUntil: 'load' });
+  await pickReport(page);
 
   await realJob(page);
 
@@ -1161,16 +1167,32 @@ test('the write-ups choose the right wording with the network cut', async ({ bro
   await page.close();
 });
 
+const shown = (page, sel) => page.$eval(sel, e => getComputedStyle(e).display !== 'none');
+
 test('going offline is announced, and the notice clears when signal returns', async ({ browser, origin }) => {
   const page = await openApp(browser, origin);
-  ok(await page.$eval('#offlineStrip', e => e.hidden), 'nothing shown while online');
+  ok(!(await shown(page, '#offlineStrip')), 'nothing shown while online');
   await page.appContext.setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event('offline')));
-  ok(!(await page.$eval('#offlineStrip', e => e.hidden)), 'the offline notice appears');
+  ok(await shown(page, '#offlineStrip'), 'the offline notice appears');
   ok(/still works/.test(await page.$eval('#offlineStrip', e => e.textContent)), 'and is reassuring, not alarming');
   await page.appContext.setOffline(false);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
-  ok(await page.$eval('#offlineStrip', e => e.hidden), 'and clears again');
+  ok(!(await shown(page, '#offlineStrip')), 'and clears again');
+  await page.close();
+});
+
+/* A `display` rule in the page's own stylesheet outranks the browser's
+   [hidden]{display:none}, so setting .hidden silently stops working. That
+   shipped once, leaving both PWA notices on screen permanently. This checks
+   the whole document rather than the elements someone remembered to test. */
+test('everything marked hidden is actually invisible', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: null });
+  const showing = await page.evaluate(() =>
+    [...document.querySelectorAll('[hidden]')]
+      .filter(e => getComputedStyle(e).display !== 'none')
+      .map(e => e.id || e.className || e.tagName));
+  eq(showing, [], 'elements with the hidden attribute still rendering');
   await page.close();
 });
 
@@ -1224,6 +1246,313 @@ test('a new version waits for the tech, then takes over on request', async ({ br
     server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+/* ------------------------------------------------------- capacity report */
+
+/** A believable ductless job: three heads, all improved, heating. */
+const CAP_JOB = {
+  heads: [
+    {location:'Living Room', unitType:'Wall mount', model:'MSZ-FS15NA', serial:'A1122',
+     before:{btuh:'8400', returnTemp:'68.4', returnRh:'41', supplyTemp:'103.8', airflow:'663'},
+     after: {btuh:'9950', returnTemp:'68.9', returnRh:'40', supplyTemp:'112.2', airflow:'663'}},
+    {location:'Master Bedroom', unitType:'Wall mount', model:'MSZ-FS09NA', serial:'B4471',
+     before:{btuh:'5900', returnTemp:'67.1', supplyTemp:'99.4', airflow:'388'},
+     after: {btuh:'6050', returnTemp:'67.4', supplyTemp:'101.0', airflow:'388'}},
+    {location:'Basement', unitType:'Slim ducted', model:'SEZ-KD12NA', serial:'C9080',
+     before:{btuh:'7100', returnTemp:'66.2', supplyTemp:'96.8', airflow:'420', airflowSource:'measured'},
+     after: {btuh:'8600', returnTemp:'66.5', supplyTemp:'104.1', airflow:'455', airflowSource:'measured'}},
+  ],
+  outdoor: {model:'MXZ-3C30NAHZ', serial:'OD-55231', rated:'22000', tempBefore:'34', tempAfter:'35'},
+};
+
+const capPage = async (browser, origin, job = CAP_JOB) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, job);
+  return page;
+};
+
+/* ---- chooser ---- */
+
+test('the chooser offers three report types and routes to the right form', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: null });
+  eq(await page.$$eval('#chooser [data-rt]', els => els.map(e => e.dataset.rt)),
+    ['airflow', 'capacity', 'combination'], 'three ways in');
+  ok(await page.$eval('#tool', e => e.hidden) && await page.$eval('#capCard', e => e.hidden),
+    'neither form is shown until one is picked');
+
+  await pickReport(page, 'capacity');
+  ok(await page.$eval('#tool', e => e.hidden), 'the airflow uploader stays out of the way');
+  ok(!(await page.$eval('#capCard', e => e.hidden)), 'the capacity form appears');
+  ok(!(await page.$eval('#clientCard', e => e.hidden)), 'client details are available to every report type');
+
+  await page.click('#rtBack');
+  await pickReport(page, 'airflow');
+  ok(!(await page.$eval('#tool', e => e.hidden)), 'and back to airflow');
+  ok(await page.$eval('#capCard', e => e.hidden), 'capacity form hidden again');
+  await page.close();
+});
+
+/* ---- entry flow ---- */
+
+test('choosing a head count renders exactly that many units', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  eq(await page.$$eval('.caphd', els => els.length), 1, 'starts at one');
+  await page.selectOption('#capCount', '3');
+  eq(await page.$$eval('.caphd', els => els.length), 3, 'three heads, no spare blocks');
+  await page.selectOption('#capCount', '5');
+  eq(await page.$$eval('.caphd', els => els.length), 5, 'five');
+  await page.close();
+});
+
+test('reducing the head count keeps what was already entered', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, CAP_JOB);
+  await page.selectOption('#capCount', '2');
+  eq(await page.evaluate(() => CAP.heads.map(h => h.location)), ['Living Room', 'Master Bedroom'],
+    'the earlier heads survive');
+  await page.close();
+});
+
+test('one head is open at a time and Done moves to the next', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '3');
+  eq(await page.$$eval('.caphd.open', els => els.length), 1, 'exactly one expanded');
+  await page.selectOption('.caphd.open select[data-key="location"]', 'Kitchen');
+  await page.fill('.caphd.open input[data-key="model"]', 'MSZ-TEST');
+  await page.fill('#capB-0-before', '7000');
+  await page.fill('#capB-0-after', '7900');
+  eq(await page.evaluate(() => [CAP.heads[0].location, CAP.heads[0].model, CAP.heads[0].after.btuh]),
+    ['Kitchen', 'MSZ-TEST', '7900'], 'typed into the state');
+  await page.click('.caphd.open [data-next]');
+  eq(await page.evaluate(() => CAP.open), 1, 'moved on to unit 2');
+  eq(await page.$$eval('.caphd.done', els => els.length), 1, 'unit 1 collapsed as complete');
+  await page.close();
+});
+
+test('Generate stays disabled until every unit has an area and both readings', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '2');
+  ok(await page.$eval('#gen', e => e.disabled), 'disabled while empty');
+  await setCapacity(page, { heads: [CAP_JOB.heads[0], {location:'Den', before:{btuh:'5000'}, after:{btuh:''}}] });
+  ok(await page.$eval('#gen', e => e.disabled), 'still disabled with one reading missing');
+  await setCapacity(page, { heads: CAP_JOB.heads.slice(0, 2) });
+  ok(!(await page.$eval('#gen', e => e.disabled)), 'enabled once both are complete');
+  await page.close();
+});
+
+/* ---- mode ---- */
+
+test('mode is detected from supply against return, either way', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, { heads: [{location:'Den', before:{btuh:'5000', returnTemp:'68', supplyTemp:'104'}, after:{btuh:'5500', returnTemp:'68', supplyTemp:'108'}}] });
+  eq(await page.evaluate(() => CAP.mode), 'heating', 'supply warmer than return');
+  await setCapacity(page, { heads: [{location:'Den', before:{btuh:'5000', returnTemp:'75', supplyTemp:'56'}, after:{btuh:'5500', returnTemp:'75', supplyTemp:'54'}}] });
+  eq(await page.evaluate(() => CAP.mode), 'cooling', 'supply cooler than return');
+  await page.close();
+});
+
+test('mode falls back to supply alone, and a manual choice stops the detection', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, { heads: [{location:'Den', before:{btuh:'5000', supplyTemp:'104'}, after:{btuh:'5500', supplyTemp:'108'}}] });
+  eq(await page.evaluate(() => CAP.mode), 'heating', 'one probe is enough to guess');
+  await page.click('#capModeSwitch');
+  eq(await page.evaluate(() => [CAP.mode, CAP.modeManual]), ['cooling', true], 'overridden');
+  await setCapacity(page, { heads: [{location:'Den', before:{btuh:'5000', returnTemp:'68', supplyTemp:'110'}, after:{btuh:'5500', returnTemp:'68', supplyTemp:'112'}}] });
+  eq(await page.evaluate(() => CAP.mode), 'cooling', 'detection does not overrule the tech');
+  await page.close();
+});
+
+/* ---- the report ---- */
+
+test('the capacity report totals the heads and compares them with the rated figure', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/21,400/.test(txt) && /24,600/.test(txt), 'system total before and after');
+  ok(/22,000/.test(txt), 'the outdoor rated figure');
+  ok(/11.8%/.test(txt), 'measured against rated');
+  eq(await page.$$eval('.capcard', els => els.length), 3, 'one card per indoor unit');
+  ok(/Living Room/.test(txt) && /Slim ducted/.test(txt) && /SEZ-KD12NA/.test(txt), 'each unit is identified');
+  await page.close();
+});
+
+test('capacity that barely moved is reported as holding steady, not as a win', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, { heads: [{location:'Den', before:{btuh:'6000', returnTemp:'68', supplyTemp:'104'}, after:{btuh:'6060', returnTemp:'68', supplyTemp:'104'}}],
+    outdoor: {rated:'6000'} });
+  await page.click('#gen');
+  const card = await page.$eval('.capcard', e => ({ cls: e.querySelector('.capdelta').className, t: e.textContent }));
+  ok(/\bn\b/.test(card.cls), `a 1% change is neutral, got "${card.cls}"`);
+  ok(/holding steady/.test(card.t), 'and says so plainly');
+  await page.close();
+});
+
+test('a real capacity loss is flagged rather than dressed up', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, { heads: [{location:'Den', before:{btuh:'8000', returnTemp:'68', supplyTemp:'104'}, after:{btuh:'6400', returnTemp:'68', supplyTemp:'96'}}] });
+  await page.click('#gen');
+  ok(/\bb\b/.test(await page.$eval('.capdelta', e => e.className)), 'scored as a loss');
+  ok(/Review/.test(await page.$eval('.capcell', e => e.textContent)), 'and the headline says review');
+  await page.close();
+});
+
+test('a difference in outdoor temperature is disclosed, not buried', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/Outdoor temperature differed/.test(txt), 'the caveat appears');
+  ok(/34°F before, 35°F after/.test(txt), 'with both figures');
+  ok(/weather rather than work/.test(txt), 'and says what it means');
+  await page.close();
+});
+
+test('the rated comparison carries its diversity caveat', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  ok(/nominal indoor conditions/.test(txt), 'nominal-condition caveat');
+  ok(/diversity/.test(txt) && /not a commissioning figure/.test(txt), 'diversity caveat');
+  ok(/sensible \+ latent/.test(txt), 'the capacity figure is labelled for what it is');
+  await page.close();
+});
+
+test('multiple before and after photos render as labelled galleries', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await addCapacityPhotos(page, 'before', 3);
+  await addCapacityPhotos(page, 'after', 2);
+  await page.click('#gen');
+  eq(await page.$$eval('.capgal', els => els.map(e => e.querySelector('.capgt').textContent)),
+    ['Before', 'After'], 'two galleries');
+  eq(await page.$$eval('.capshot img', els => els.length), 5, 'all five photos');
+  await page.close();
+});
+
+test('a photo can be removed from a gallery', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await addCapacityPhotos(page, 'before', 3);
+  await page.click('#capTb .capx');
+  eq(await page.evaluate(() => CAP.photos.before.length), 2, 'one dropped');
+  await page.click('#gen');
+  eq(await page.$$eval('.capshot img', els => els.length), 2, 'and it is out of the report');
+  await page.close();
+});
+
+/* ---- combination ---- */
+
+async function combinationPage(browser, origin) {
+  const page = await openApp(browser, origin, { reportType: 'combination' });
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  await setCapacity(page, CAP_JOB);
+  return page;
+}
+
+test('a combination report is one document with both halves', async ({ browser, origin }) => {
+  const page = await combinationPage(browser, origin);
+  await page.click('#gen');
+  const heads = await page.$$eval('#sheet .sh', els => els.map(e => e.textContent));
+  ok(heads.includes('Summary Calculations — Before vs After'), 'the airflow half is there');
+  ok(heads.includes('Indoor Units — Before vs After'), 'so is the capacity half');
+  eq(await page.$$eval('#sheet .rhead', els => els.length), 1, 'one header for the whole document');
+  eq(await page.$$eval('#sheet .rfoot', els => els.length), 1, 'one footer');
+  eq(await page.$$eval('#sheet .capbreak', els => els.length), 1, 'capacity starts on a fresh sheet');
+  await page.close();
+});
+
+test('a combination report waits for both halves before it can be generated', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'combination' });
+  await upload(page, 1, before);
+  await upload(page, 2, after);
+  ok(await page.$eval('#gen', e => e.disabled), 'airflow alone is not enough');
+  ok(/Finish the indoor units/.test(await page.$eval('#status', e => e.textContent)), 'and says what is missing');
+  await setCapacity(page, CAP_JOB);
+  ok(!(await page.$eval('#gen', e => e.disabled)), 'enabled once capacity is in too');
+  await page.close();
+});
+
+/* ---- print ---- */
+
+test('the capacity report prints without cutting a unit across a page', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, {
+    heads: [1, 2, 3, 4, 5].map(n => ({
+      location: ['Living Room','Kitchen','Master Bedroom','Office','Basement'][n - 1],
+      unitType: 'Wall mount', model: `MSZ-TEST${n}`, serial: `SN${n}0000`,
+      before: {btuh: String(5000 + n * 400), returnTemp:'68', supplyTemp:'104', airflow:'400'},
+      after:  {btuh: String(5800 + n * 400), returnTemp:'68', supplyTemp:'110', airflow:'400'},
+    })),
+    outdoor: {model:'MXZ-5C42NAHZ', rated:'36000', tempBefore:'33', tempAfter:'35'},
+  });
+  await addCapacityPhotos(page, 'before', 2);
+  await addCapacityPhotos(page, 'after', 2);
+  await page.click('#gen');
+
+  const pages = await pageTexts(await page.pdf(LETTER));
+  ok(pages.length >= 2, `a five-head job needs more than one page, got ${pages.length}`);
+  // Real pagination: a unit's name and both of its readings must land together.
+  for (let n = 1; n <= 5; n++) {
+    const name = ['Living Room','Kitchen','Master Bedroom','Office','Basement'][n - 1];
+    const b = (5000 + n * 400).toLocaleString('en-CA');
+    const a = (5800 + n * 400).toLocaleString('en-CA');
+    const whole = pages.filter(t => t.includes(name) && t.includes(b) && t.includes(a));
+    eq(whole.length, 1, `${name} should sit whole on one page (found on ${whole.length})`);
+  }
+  await page.close();
+});
+
+test('a combination report keeps the airflow half on its own pages', async ({ browser, origin }) => {
+  const page = await combinationPage(browser, origin);
+  await page.click('#gen');
+  const pages = await pageTexts(await page.pdf(LETTER));
+  ok(pages.length >= 3, `airflow's two pages plus capacity, got ${pages.length}`);
+  // Section headers are uppercased by CSS, so they come out of the PDF in caps.
+  const airflowPage = pages.findIndex(t => /Summary Calculations/i.test(t));
+  const capacityPage = pages.findIndex(t => /Indoor Units/i.test(t));
+  ok(airflowPage > -1 && capacityPage > -1, `both halves printed (airflow ${airflowPage}, capacity ${capacityPage})`);
+  ok(capacityPage > airflowPage, 'capacity comes after airflow');
+  ok(!/Indoor Units/i.test(pages[airflowPage]), 'and does not share a page with it');
+  await page.close();
+});
+
+/* ---- history ---- */
+
+test('a capacity job saves and reopens with its heads and outdoor unit', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await addCapacityPhotos(page, 'before', 2);
+  await page.fill('#cName', 'Wanda Klassen');
+  await page.click('#gen');
+  await stubPrint(page);
+  await printReport(page);
+
+  const recs = await records(page);
+  eq(recs.length, 1, 'filed');
+  eq(recs[0].type, 'capacity', 'stored as a capacity job');
+  eq(recs[0].cap.heads.length, 3, 'with all three heads');
+  eq(recs[0].capPhotos.before.length, 2, 'and its photos');
+
+  await page.reload();
+  await page.click('#histToggle');
+  await openFromHistory(page);
+  eq(await page.evaluate(() => CAP.heads.map(h => h.location)),
+    ['Living Room', 'Master Bedroom', 'Basement'], 'heads restored');
+  eq(await page.evaluate(() => CAP.outdoor.rated), '22000', 'outdoor unit restored');
+  eq(await page.evaluate(() => CAP.photos.before.length), 2, 'photos restored');
+  ok(/24,600/.test(await page.$eval('#sheet', e => e.textContent)), 'and the report re-rendered');
+  await page.close();
+});
+
+test('the saved list describes a capacity job in its own terms', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.fill('#cName', 'Wanda Klassen');
+  await page.click('#gen');
+  await stubPrint(page);
+  await printReport(page);
+  await page.click('#histToggle');
+  const meta = await page.$eval('.hmeta', e => e.textContent);
+  ok(/3 units/.test(meta) && /heating/.test(meta), `expected units and mode, got "${meta}"`);
+  ok(/capacity/.test(meta), 'and the capacity change');
+  await page.close();
 });
 
 /* ------------------------------------------------------------------ run */

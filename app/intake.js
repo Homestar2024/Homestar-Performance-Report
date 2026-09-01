@@ -91,16 +91,29 @@ function syncReview(){
 
 function setStatus(){
   const s = $('status'), gen = $('gen');
+
+  // A capacity report has no PDFs to wait on — it gates on the head readings.
+  if (reportType === 'capacity'){
+    const ready = capReady();
+    gen.disabled = !ready;
+    s.classList.remove('bad');
+    s.textContent = ready ? 'Ready. Check the readings, then generate.' : 'Every indoor unit needs an area and both readings.';
+    return;
+  }
+
   if (!PDFJS_READY){ s.classList.add('bad'); s.textContent = 'PDF reader unavailable.'; gen.disabled = true; return; }
   const bothRead = slots[1] && slots[1].ok && slots[2] && slots[2].ok;
   const anyFail  = (slots[1] && !slots[1].ok) || (slots[2] && !slots[2].ok);
-  gen.disabled = !bothRead;
+  // Combination needs the capacity side finished too.
+  const capOk = reportType !== 'combination' || capReady();
+  gen.disabled = !bothRead || !capOk;
   s.classList.toggle('bad', !!anyFail);
   if (anyFail){ s.textContent = 'One report could not be read. Replace it to continue.'; return; }
   if (!bothRead){
     s.textContent = 'Waiting for ' + (!slots[1] && !slots[2] ? 'two reports' : 'one more report') + '.';
     return;
   }
+  if (!capOk){ s.textContent = 'Airflow captured. Finish the indoor units below.'; return; }
   const miss = missingCount();
   s.textContent = miss
     ? 'Check the highlighted ' + (miss===1 ? 'value' : miss + ' values') + ' — they didn\'t come off the PDF.'
@@ -185,6 +198,7 @@ function startNewJobIfFiled(){
   const hadDetails = !!($('cName').value.trim() || $('cAddr').value.trim());
   $('cName').value = '';
   $('cAddr').value = '';
+  capReset();
   if (hadPhotos || hadDetails)
     toast('Starting a new job — photos and client details cleared. The last one is in your history.');
 }
@@ -267,12 +281,7 @@ function mergedData(n){
   return out;
 }
 
-$('gen').addEventListener('click', ()=>{
-  buildReport(mergedData(order[0]), mergedData(order[1]));
-  document.body.classList.add('has-report');
-  $('report').style.display = 'block';
-  $('report').scrollIntoView({behavior:'smooth'});
-});
+$('gen').addEventListener('click', ()=> generateReport());
 
 if (!PDFJS_READY){
   $('loadWarn').hidden = false;

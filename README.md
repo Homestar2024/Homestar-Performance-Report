@@ -14,7 +14,8 @@ index.html              markup, styles, embedded logo and icons
 app/core.js             config, shared state, METRICS/FIELDS, helpers
 app/parser.js           reading TEC TrueFlow PDFs
 app/intake.js           uploader, confirm & correct panel, photographs
-app/report.js           scoring, write-ups, report assembly
+app/report.js           shared shell, airflow scoring and write-ups
+app/capacity.js         chooser, capacity entry flow and report
 app/history.js          IndexedDB storage, backup, print actions
 app/pwa.js              connection notice, service-worker updates
 sw.js                   service worker — offline shell
@@ -36,6 +37,55 @@ PDFs are parsed in the browser with [pdf.js](https://mozilla.github.io/pdf.js/)
 — customer measurements and photographs never leave the device; photos are
 decoded, scaled and embedded entirely in the page. No `localStorage`, no
 cookies, no analytics, no CDN.
+
+## Three report types
+
+The chooser is the first screen:
+
+- **Airflow** — the TrueFlow before/after report. Ducted work. Two pages.
+- **Capacity** — delivered capacity per indoor unit, from Testo probe readings.
+  Ductless, or ducted where only capacity matters. One page for a single head,
+  growing with heads and photographs.
+- **Combination** — both in one document. The airflow half keeps its own pages,
+  then a hard break, then capacity.
+
+Client name, address and technician are shared by all three.
+
+### Capacity report
+
+Up to five indoor units, entered one at a time in an accordion so a five-head
+system does not become an endless scroll. Each head takes an area, unit type,
+model, serial and a before/after BTU/h reading; supporting readings (return and
+supply temp/RH, airflow, Hz/V) sit behind a disclosure and feed the operating
+conditions section.
+
+**The BTU/h figure is carried, never recomputed.** Testo derives total delivered
+capacity (sensible + latent) from humidity probes at the return and supply; the
+report prints that number and labels it for what it is. A dry-bulb-only
+fallback would be sensible-only and must always be labelled as such — never
+folded into a total.
+
+**Mode is detected from supply against return dry-bulb**, which holds whatever
+the conditions. With only a supply reading it falls back to a 65°F threshold.
+Either way the technician can override it, and once they do, detection stops
+arguing.
+
+Photographs: multiple before and multiple after, since a job can have several
+indoor units plus the outdoor unit.
+
+### Honesty rules in the capacity report
+
+- A change inside ±2% reads as **holding steady**, not as a win. Routine
+  maintenance often moves capacity very little and dressing that up would make
+  every report worthless.
+- A real capacity loss is flagged, not buried.
+- Both outdoor temperatures are printed, and if they differ the report says so
+  and that some of the difference is weather rather than work.
+- Measured above rated is normal and shown as positive; below rated is neutral,
+  not a failure.
+- The rated comparison carries its caveats: nominal indoor conditions, and
+  multi-zone diversity making this a sound field indicator rather than a
+  commissioning figure.
 
 ## Install it on the phone
 
@@ -253,7 +303,24 @@ landscape shots both sit in a consistent frame and neither gets cropped. If
 only one photo is added it renders on its own; if neither is, the section does
 not appear.
 
-### The report must fit exactly two Letter pages
+### Print: airflow is pinned, capacity grows
+
+**The airflow report must stay exactly two Letter pages.** Capacity and
+combination grow with the number of heads and photographs, and must paginate
+cleanly at any size.
+
+The two are kept apart structurally, not by discipline: every element in the
+capacity report uses a `cap`-prefixed class, and the capacity print rules live
+in their own `@media print` block that only matches those. A capacity change
+cannot reach the airflow report's layout.
+
+`tests/print-check.mjs` renders eleven shapes across all three report types. It
+checks the page count **and** that nothing was cut across a break — the latter
+against real pagination, by pulling the text of each printed page and asserting
+each indoor unit's name and both its readings land on the same one. A page
+count alone would not catch a half-cut card.
+
+### The airflow report's own budget
 
 `@media print` compresses spacing, hides the per-metric notes, sets
 `@page { size: letter portrait; margin: 0.5in }`, and puts a hard page break
@@ -348,7 +415,15 @@ overrides, metric directionality, benefit copy selection in both directions,
 photo decode/downscale/removal, history save/reopen/rename/delete/search,
 backup export and import, storage-failure fallback, cross-job carry-over,
 offline operation end to end, the service-worker update handshake, manifest and
-icon validity, and the two-page print at several content lengths.
+icon validity, the chooser and capacity entry flow, mode detection and
+override, capacity scoring and caveats, combination assembly, and pagination
+across all three report types.
+
+One audit test is worth knowing about: it walks every element carrying the
+`hidden` attribute and fails if any of them still renders. An author `display`
+rule outranks the browser's `[hidden]{display:none}`, which silently broke both
+PWA notices and left them on screen permanently. `[hidden]{display:none
+!important}` now guards it, and the audit catches the next one.
 
 ### The corpus is the weak spot
 

@@ -87,27 +87,46 @@ const histKey = (name, bd, ad)=>
   [(name||'untitled').toLowerCase().replace(/\s+/g,' ').trim(), bd||'?', ad||'?'].join('|');
 
 function currentTitle(client, addr, after){
-  return client || addr || ('Report — ' + (after.date || new Date().toISOString().slice(0,10)));
+  return client || addr || ('Report — ' + ((after && after.date) || new Date().toISOString().slice(0,10)));
+}
+
+/**
+ * One job = one record. Airflow jobs are identified by their two test dates.
+ * A capacity job has no PDF dates, so it is keyed by the day it was captured —
+ * reprinting the same day updates it, a later visit files a new one.
+ */
+function recordKey(type, name, before, after){
+  if (type === 'capacity') return histKey(name, 'capacity', new Date().toISOString().slice(0,10));
+  return histKey(name, before.date, after.date) + (type === 'combination' ? '|combo' : '');
 }
 
 async function saveCurrent(){
-  const before = mergedData(order[0]), after = mergedData(order[1]);
+  const type   = reportType || 'airflow';
+  const hasAir = type !== 'capacity';
+  const hasCap = type !== 'airflow';
+  const before = hasAir ? mergedData(order[0]) : null;
+  const after  = hasAir ? mergedData(order[1]) : null;
   const client = $('cName').value.trim();
   const addr   = $('cAddr').value.trim();
   const tech   = $('cTech').value.trim();
-  const key    = histKey(client || addr, before.date, after.date);
+  const key    = recordKey(type, client || addr, before, after);
   const now    = new Date().toISOString();
 
   const existing = (await dbAll()).find(r=>r.key === key);
   const rec = {
     id: existing ? existing.id : uid(),
-    key,
+    key, type,
     title: existing && existing.renamed ? existing.title : currentTitle(client, addr, after),
     renamed: existing ? !!existing.renamed : false,
     client, addr, tech,
     before, after,
-    photoBefore: await toBlob(photos[1]),
-    photoAfter:  await toBlob(photos[2]),
+    photoBefore: hasAir ? await toBlob(photos[1]) : null,
+    photoAfter:  hasAir ? await toBlob(photos[2]) : null,
+    cap: hasCap ? capSnapshot() : null,
+    capPhotos: hasCap ? {
+      before: await Promise.all(CAP.photos.before.map(toBlob)),
+      after:  await Promise.all(CAP.photos.after.map(toBlob)),
+    } : null,
     savedAt: existing ? existing.savedAt : now,
     updatedAt: now,
   };
@@ -129,6 +148,28 @@ async function saveAndReport(){
 async function openRecord(id){
   const rec = await dbGet(id);
   if (!rec){ toast('That report is no longer in history.', true); return; }
+
+  // Records saved before the capacity report existed carry no type.
+  chooseReport(rec.type || 'airflow');
+
+  if (rec.cap){
+    capRestore(rec.cap);
+    const cp = rec.capPhotos || {before:[], after:[]};
+    capSetPhotos(
+      await Promise.all((cp.before || []).map(toDataUrl)),
+      await Promise.all((cp.after  || []).map(toDataUrl)));
+  }
+
+  if (!rec.before || !rec.after){
+    $('cName').value = rec.client || '';
+    $('cAddr').value = rec.addr || '';
+    $('cTech').value = rec.tech || '';
+    generateReport();
+    jobSaved = true;
+    toast(`Opened “${rec.title}”`);
+    return;
+  }
+
   for (const n of [1,2]){
     const src = n === 1 ? rec.before : rec.after;
     slots[n] = {fileName:'From history', ok:true, data:src};
@@ -154,15 +195,13 @@ async function openRecord(id){
   $('review').hidden = false;
   syncReview();
 
-  buildReport(mergedData(1), mergedData(2));
-  document.body.classList.add('has-report');
-  $('report').style.display = 'block';
-  $('report').scrollIntoView({behavior:'smooth'});
+  generateReport();
   jobSaved = true;          // it is already in history; a new upload starts a fresh job
   toast(`Opened “${rec.title}”`);
 }
 
 function histSummary(rec){
+  if ((rec.type || 'airflow') === 'capacity') return capSummary(rec) + ' · saved ' + (rec.updatedAt || '').slice(0,10);
   const bits = [];
   if (rec.before.date || rec.after.date) bits.push(`${rec.before.date||'?'} → ${rec.after.date||'?'}`);
   for (const key of ['totalFlow','tesp']){
@@ -171,7 +210,9 @@ function histSummary(rec){
     if (st.pct == null || !st.arrow) continue;
     bits.push(`<span class="${st.cls==='b'?'':'up'}">${st.arrow} ${Math.abs(st.pct).toFixed(0)}%</span> ${key==='totalFlow'?'airflow':'TESP'}`);
   }
-  if (rec.photoBefore || rec.photoAfter) bits.push('photos');
+  if (rec.type === 'combination') bits.push('+ capacity');
+  if (rec.photoBefore || rec.photoAfter
+      || (rec.capPhotos && (rec.capPhotos.before || []).length + (rec.capPhotos.after || []).length)) bits.push('photos');
   bits.push('saved ' + (rec.updatedAt || '').slice(0,10));
   return bits.join(' · ');
 }
