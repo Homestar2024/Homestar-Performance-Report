@@ -19,11 +19,12 @@ const AREAS = ['Living Room', 'Kitchen', 'Master Bedroom', 'Bedroom', 'Office',
 const UNIT_TYPES = ['Wall mount', 'Floor mount', 'Slim ducted', 'Ceiling cassette', 'Air handler'];
 
 /* Testo probe serials, kept as a table rather than hardcoded in labels. */
+/* Used to work out which probe a reading came from when a screenshot lists
+   them by serial. Serials are never shown — not in the form, not on the
+   report. */
 const PROBES = {
-  returnAir:  {serial: '651', label: 'Return air'},
-  supplyAir:  {serial: '877', label: 'Supply air'},
-  outdoorAir: {serial: '198', label: 'Outdoor air'},
-  clamp:      {serial: '217', label: 'Clamp meter'},
+  returnAir: {serial: '651', label: 'Return air'},
+  supplyAir: {serial: '877', label: 'Supply air'},
 };
 
 /* Supply warmer than return means heating. The single-probe fallback only
@@ -37,7 +38,7 @@ const CAP_TOLERANCE_PCT = 2;
 const blankPhase = () => ({
   btuh: '', btuhSource: 'manual',
   returnTemp: '', returnRh: '', supplyTemp: '', supplyRh: '',
-  airflow: '', airflowSource: 'rated', hz: '', volts: '',
+  airflow: '', airflowSource: 'rated',
 });
 const blankHead = () => ({
   location: '', locationOther: '', unitType: UNIT_TYPES[0], model: '', serial: '',
@@ -159,9 +160,9 @@ function phaseReadings(i, phase, ph){
   return `<div class="capsub">
     <div class="capsubh">${phase === 'before' ? 'Before' : 'After'} — supporting readings</div>
     <div class="captwo">
-      ${f('returnTemp', `Return °F <span class="pr">${PROBES.returnAir.serial}</span>`, '—')}
+      ${f('returnTemp', 'Return °F', '—')}
       ${f('returnRh', 'Return %RH', '—')}
-      ${f('supplyTemp', `Supply °F <span class="pr">${PROBES.supplyAir.serial}</span>`, '—')}
+      ${f('supplyTemp', 'Supply °F', '—')}
       ${f('supplyRh', 'Supply %RH', '—')}
       ${f('airflow', 'Airflow CFM', '—')}
       <div class="capfld"><label>Airflow from</label>
@@ -169,8 +170,6 @@ function phaseReadings(i, phase, ph){
           <option value="rated"${ph.airflowSource === 'rated' ? ' selected' : ''}>Rated (high fan)</option>
           <option value="measured"${ph.airflowSource === 'measured' ? ' selected' : ''}>Measured</option>
         </select></div>
-      ${f('hz', `Hz <span class="pr">${PROBES.clamp.serial}</span>`, '—')}
-      ${f('volts', 'Volts AC', '—')}
     </div>
   </div>`;
 }
@@ -281,8 +280,6 @@ function conditionsPanel(phase){
       stp != null ? `SA ${stp}°F${p.supplyRh ? ` / ${p.supplyRh}%` : ''}` : null,
       dt !== '—' ? `ΔT ${dt}` : null,
       p.airflow ? `${p.airflow} CFM (${p.airflowSource})` : null,
-      p.hz ? `${p.hz} Hz` : null,
-      p.volts ? `${p.volts} V` : null,
     ].filter(Boolean).map(esc).join(' · ');
     return `<div class="caprow"><span class="caprk">${esc(headName(h) || `Unit ${i + 1}`)}</span><span class="caprv">${bits || '—'}</span></div>`;
   }).join('');

@@ -58,9 +58,9 @@ Client name, address and technician are shared by all three.
 Up to five indoor units, entered one at a time in an accordion so a five-head
 system does not become an endless scroll. Each head takes an area, unit type,
 model, serial and a before/after BTU/h reading — the report prints the area as
-a heading with unit type, model and serial on their own lines beneath it; supporting readings (return and
-supply temp/RH, airflow, Hz/V) sit behind a disclosure and feed the operating
-conditions section.
+a heading with unit type, model and serial on their own lines beneath it; supporting readings (return and supply temp/RH, airflow) sit behind a
+disclosure and feed the operating conditions section, and are filled in by
+reading a screenshot.
 
 **The BTU/h figure is carried, never recomputed.** Testo derives total delivered
 capacity (sensible + latent) from humidity probes at the return and supply; the

@@ -1206,6 +1206,44 @@ test('the worker never takes over on its own', async () => {
   ok(handler.includes('self.skipWaiting()'), 'and it is the one behind SKIP_WAITING');
 });
 
+/* A released fix used to need two loads to appear: the app's own JS was served
+   cache-first, so the first load after a deploy ran the previous version. That
+   is how a shipped OCR change looked broken in the field. */
+test('a deployed change to the app takes effect on the next load, not the one after', async ({ browser }) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homestar-fresh-'));
+  for (const f of ['index.html', 'sw.js', 'manifest.webmanifest']) fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));
+  for (const d of ['app', 'vendor', 'icons']) fs.cpSync(path.join(ROOT, d), path.join(dir, d), { recursive: true });
+  const { server, origin } = await serve(dir);
+  try {
+    const page = await openApp(browser, origin, { serviceWorker: true });
+    await swReady(page);
+    eq(await page.evaluate(() => window.__deployMarker), undefined, 'not there yet');
+
+    // Ship a change to one of the app files.
+    const f = path.join(dir, 'app', 'capacity.js');
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8') + '\nwindow.__deployMarker = "shipped";\n');
+
+    await page.reload({ waitUntil: 'load' });
+    eq(await page.evaluate(() => window.__deployMarker), 'shipped',
+      'the very next load runs the new code');
+    await page.close();
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the app still loads from cache when the network is gone', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { serviceWorker: true });
+  await swReady(page);
+  await page.appContext.setOffline(true);
+  await page.reload({ waitUntil: 'load' });
+  await pickReport(page, 'capacity');
+  ok(await page.$('#capHeads'), 'revalidating app code must not cost offline support');
+  await page.appContext.setOffline(false);
+  await page.close();
+});
+
 test('a new version waits for the tech, then takes over on request', async ({ browser }) => {
   // Serve a throwaway copy so the deployed files can be mutated mid-test.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homestar-pwa-'));
@@ -1407,6 +1445,35 @@ test('no page controls reach the printed report, in any report type', async ({ b
     }
     await page.close();
   }
+});
+
+test('the entry form shows no probe serials and no electrical fields', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.evaluate(() => { CAP.open = 0; renderHeads(); });
+  await page.click('.caphd.open details summary');
+  // The disclosure holds a block per phase; one block is enough to check.
+  const labels = await page.$eval('.caphd.open .capsub',
+    el => [...el.querySelectorAll('label')].map(e => e.textContent.trim()));
+  eq(labels, ['Return °F', 'Return %RH', 'Supply °F', 'Supply %RH', 'Airflow CFM', 'Airflow from'],
+    'supporting readings, with no serials and no Hz/Volts');
+  const allLabels = await page.$$eval('.caphd.open .capsub label', els => els.map(e => e.textContent).join(' '));
+  ok(!/651|877|198|217/.test(allLabels), 'no probe serials anywhere in the form');
+  eq(await page.$$eval('.caphd.open [data-key="hz"], .caphd.open [data-key="volts"]', els => els.length), 0,
+    'the clamp-meter fields are gone');
+  await page.close();
+});
+
+test('a screenshot fills the supporting readings in the form, not just the state', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await page.evaluate(t => ocrReview(0, 'before', parseTesto(t)), TESTO_OUTPUT_TEXT);
+  await page.click('[data-use="0:before"]');
+  const fields = await page.$$eval('.caphd.open .capsub input',
+    els => Object.fromEntries(els.filter(e => e.dataset.phase === 'before').map(e => [e.dataset.key, e.value])));
+  eq([fields.returnTemp, fields.returnRh, fields.supplyTemp, fields.supplyRh],
+    ['68.8', '95', '50.3', '81'], 'the boxes on screen show the readings, not just CAP');
+  ok(await page.$eval('.caphd.open details', e => e.open), 'and the section is open so they are visible');
+  await page.close();
 });
 
 test('the capacity report totals the heads and compares them with the rated figure', async ({ browser, origin }) => {

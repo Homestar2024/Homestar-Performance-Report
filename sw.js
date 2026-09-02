@@ -16,9 +16,13 @@
  *
  * Bump VERSION on every change to this file or the shell list.
  */
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `homestar-${VERSION}`;
 const NAV_TIMEOUT_MS = 3000;
+const ASSET_TIMEOUT_MS = 3000;
+
+/* Files that change whenever the app is deployed. */
+const APP_CODE = /(^|\/)(app\/[^/]+\.js|index\.html|manifest\.webmanifest)$/;
 
 /* The Tesseract engine under vendor/tesseract/ is deliberately NOT precached:
    it is ~8.7MB and OCR is optional, so making every first install pay for it
@@ -97,7 +101,26 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Everything else is a versioned static asset: serve from cache, refresh behind.
+  // The app's own code changes on every deploy, so it is revalidated the same
+  // way navigations are. Serving it cache-first meant a released fix did not
+  // appear until the SECOND load — which is exactly how a shipped OCR change
+  // looked broken in the field. Libraries and icons never change without a
+  // filename change, so those stay cache-first.
+  if (APP_CODE.test(url.pathname)) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await networkWithTimeout(req, ASSET_TIMEOUT_MS);
+        if (fresh && fresh.ok) (await caches.open(CACHE)).put(req, fresh.clone());
+        return fresh;
+      } catch (e) {
+        return (await caches.match(req, {ignoreSearch: true})) || Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Everything else is immutable for the life of its filename: cache first,
+  // refresh quietly behind.
   event.respondWith((async () => {
     const cached = await caches.match(req, {ignoreSearch: true});
     const network = fetch(req).then(res => {
