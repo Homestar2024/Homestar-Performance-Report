@@ -148,6 +148,9 @@ function isDeltaTScreen(text){
   return /Differential\s*Temperature/i.test(String(text || ''));
 }
 
+/* "g/m³" as OCR renders it — the superscript comes back as ?, °, or nothing. */
+const AH_UNIT = /g\s*[\/\u2044|]?\s*m\s*[\u00b3\u00b2?\u00b0]?/gi;
+
 const numsOn = line => (String(line).match(/-?\d+(?:[.,]\d+)?/g) || [])
   .map(t => parseFloat(t.replace(',', '.')));
 
@@ -165,21 +168,132 @@ function oneNum(line, labelRe){
    the dew point is believed instead. */
 const RH_TOLERANCE_PCT = 3;
 
-/**
- * Relative humidity implied by dry bulb and dew point (Magnus).
+/* ---------------------------- psychrometrics ------------------------------
  *
- * Testo shows both, which makes each a check on the other: at 68.8°F with a
- * 52.0°F dew point the humidity is 55%, so a reading of 95% is a misread and
- * not a measurement. This is what catches a digit error on a value headed for
- * a customer's report.
+ * Testo puts four readings of the same air on screen — dry bulb, relative
+ * humidity, dew point and absolute humidity — and any two of them imply the
+ * other two. That redundancy is the only thing standing between an OCR digit
+ * error and a figure on a customer's report, so it is used in every direction
+ * rather than only to check the humidity.
+ *
+ * Magnus throughout, which agrees with a psychrometric chart to well inside
+ * the precision Testo displays.
+ */
+const cOf = f => (f - 32) * 5 / 9;
+const fOf = c => c * 9 / 5 + 32;
+const esOf = c => 6.112 * Math.exp(17.62 * c / (243.12 + c));          // hPa
+const cOfEs = es => { const l = Math.log(es / 6.112); return 243.12 * l / (17.62 - l); };
+const AH_K = 216.7;                                       // g·K / (m³·hPa)
+
+const ahOf     = (tF, rh) => AH_K * (rh / 100) * esOf(cOf(tF)) / (cOf(tF) + 273.15);
+const rhOfAh   = (tF, ah) => 100 * (ah * (cOf(tF) + 273.15) / AH_K) / esOf(cOf(tF));
+const dewOf    = (tF, rh) => fOf(cOfEs(rh / 100 * esOf(cOf(tF))));
+const tempOfRhDew = (rh, dewF) => fOf(cOfEs(100 * esOf(cOf(dewF)) / rh));
+const tempOfDewAh = (dewF, ah) => AH_K * esOf(cOf(dewF)) / ah - 273.15 > -273
+  ? fOf(AH_K * esOf(cOf(dewF)) / ah - 273.15) : null;
+
+/** Absolute humidity rises monotonically with temperature at a fixed RH, so a
+    bisection is exact enough and cannot diverge. */
+function tempOfRhAh(rh, ah){
+  let lo = -60, hi = 90;
+  for (let i = 0; i < 60; i++){
+    const mid = (lo + hi) / 2;
+    (AH_K * (rh / 100) * esOf(mid) / (mid + 273.15) < ah ? lo = mid : hi = mid);
+  }
+  return fOf((lo + hi) / 2);
+}
+
+/**
+ * Relative humidity implied by dry bulb and dew point.
+ *
+ * At 68.8°F with a 52.0°F dew point the humidity is 55%, so a reading of 95%
+ * is a misread and not a measurement.
  */
 function rhFromDewPoint(tempF, dewF){
   if (typeof tempF !== 'number' || typeof dewF !== 'number') return null;
   if (dewF > tempF + 0.5) return null;             // impossible; one is misread
-  const c = f => (f - 32) * 5 / 9;
-  const es = t => 6.112 * Math.exp(17.62 * t / (243.12 + t));
-  const rh = 100 * es(c(dewF)) / es(c(tempF));
+  const rh = 100 * esOf(cOf(dewF)) / esOf(cOf(tempF));
   return (rh >= 0 && rh <= 100.5) ? Math.round(rh * 10) / 10 : null;
+}
+
+const PSY_FIELDS = ['temp', 'rh', 'dew', 'ah'];
+const round1 = v => Math.round(v * 10) / 10;
+
+/* How far a reading may sit from what the others imply before it is treated as
+   a misread. Absolute humidity is proportional: it is a derived figure, and a
+   tenth of a gram means more at 7 g/m³ than at 30. */
+const PSY_TOL = {temp: 1.5, rh: RH_TOLERANCE_PCT, dew: 1.5};
+const AH_TOL_FRACTION = 0.02;
+
+const psyAgrees = (field, read, implied) => Number.isFinite(implied) && (field === 'ah'
+  ? Math.abs(read - implied) <= Math.max(0.05, Math.abs(implied) * AH_TOL_FRACTION)
+  : Math.abs(read - implied) <= PSY_TOL[field]);
+
+/** The whole state of the air, from any two of its four readings. */
+function completeState(r){
+  const has = k => typeof r[k] === 'number';
+  let temp = null, rh = null;
+  if (has('temp') && has('rh'))       { temp = r.temp; rh = r.rh; }
+  else if (has('temp') && has('dew')) { temp = r.temp; rh = rhFromDewPoint(r.temp, r.dew); }
+  else if (has('temp') && has('ah'))  { temp = r.temp; rh = rhOfAh(r.temp, r.ah); }
+  else if (has('rh') && has('dew'))   { rh = r.rh; temp = tempOfRhDew(r.rh, r.dew); }
+  else if (has('rh') && has('ah'))    { rh = r.rh; temp = tempOfRhAh(r.rh, r.ah); }
+  else if (has('dew') && has('ah'))   { temp = tempOfDewAh(r.dew, r.ah); rh = temp == null ? null : rhFromDewPoint(temp, r.dew); }
+  if (!Number.isFinite(temp) || !Number.isFinite(rh) || rh <= 0 || rh > 100.5) return null;
+  return {temp, rh, dew: dewOf(temp, rh), ah: ahOf(temp, rh)};
+}
+
+/* A misread digit usually leaves the rest of the number alone: 52.9 read back
+   as 92.9 is one character out of three. Used only to break a tie between
+   hypotheses that are otherwise equally consistent — never on its own. */
+function oneDigitApart(read, implied){
+  const a = String(Math.round(read)), b = String(Math.round(implied));
+  if (a.length !== b.length) return false;
+  let diffs = 0;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diffs++;
+  return diffs === 1;
+}
+
+/**
+ * Decide which of a probe's readings, if any, was misread.
+ *
+ * One reading is assumed wrong at a time and the rest have to agree with each
+ * other before that assumption is acted on. Three readings can show that
+ * something is wrong but not which one — any of the three could be the odd one
+ * out — so unless a single-digit substitution picks out exactly one candidate,
+ * the disagreement is reported rather than silently resolved. Guessing here
+ * would put an invented number on a customer's document.
+ */
+function reconcilePsy(read){
+  const present = PSY_FIELDS.filter(f => typeof read[f] === 'number');
+  if (present.length < 2) return {values: read, fixed: null, conflict: false};
+
+  const asRead = completeState(read);
+  if (asRead && present.every(f => psyAgrees(f, read[f], asRead[f])))
+    return {values: read, fixed: null, conflict: false};
+  if (present.length < 3) return {values: read, fixed: null, conflict: true};
+
+  let candidates = [];
+  for (const blamed of present){
+    const others = {};
+    for (const f of present) if (f !== blamed) others[f] = read[f];
+    const state = completeState(others);
+    if (!state) continue;
+    if (present.every(f => f === blamed || psyAgrees(f, read[f], state[f])))
+      candidates.push({blamed, now: round1(state[blamed])});
+  }
+  if (candidates.length > 1){
+    const digit = candidates.filter(c => oneDigitApart(read[c.blamed], c.now));
+    if (digit.length === 1) candidates = digit;
+  }
+  if (candidates.length !== 1) return {values: read, fixed: null, conflict: true};
+
+  const {blamed, now} = candidates[0];
+  return {
+    values: Object.assign({}, read, {[blamed]: now}),
+    fixed: {field: blamed, was: read[blamed], now},
+    conflict: false,
+  };
 }
 
 /**
@@ -193,11 +307,11 @@ function parseTwoColumn(lines){
   // Whichever caption comes first owns the left-hand number.
   const returnFirst = lines[head].search(/Return\s*Air/i) < lines[head].search(/Supply\s*Air/i);
 
-  const pairUnder = re => {
+  const pairUnder = (re, unit) => {
     for (let i = head; i < lines.length - 1; i++){
       const hits = lines[i].match(re);
       if (hits && hits.length >= 2){
-        const v = numsOn(lines[i + 1]);
+        const v = numsOn(unit ? lines[i + 1].replace(unit, ' ') : lines[i + 1]);
         if (v.length >= 2) return v;
       }
     }
@@ -206,6 +320,7 @@ function parseTwoColumn(lines){
   const temps = pairUnder(/Air\s*Temperature/gi);
   const rh    = pairUnder(/Relative\s*Humidity/gi);
   const dew   = pairUnder(/Dew\s*Point/gi);
+  const ah    = pairUnder(/Absolute\s*Humidity/gi, AH_UNIT);
   if (!temps && !rh) return null;
 
   const pick = (arr, side) => !arr ? null : arr[(side === 'return') === returnFirst ? 0 : 1];
@@ -213,6 +328,7 @@ function parseTwoColumn(lines){
     returnTemp: pick(temps, 'return'), supplyTemp: pick(temps, 'supply'),
     returnRh:   pick(rh, 'return'),    supplyRh:   pick(rh, 'supply'),
     returnDew:  pick(dew, 'return'),   supplyDew:  pick(dew, 'supply'),
+    returnAh:   pick(ah, 'return'),    supplyAh:   pick(ah, 'supply'),
   };
 }
 
@@ -241,6 +357,9 @@ function parseProbeCards(lines){
     } else if (/Dew\s*Point/i.test(line)){
       const v = oneNum(line, /Dew\s*Point|°?\s*F/gi);
       if (v != null) out[role + 'Dew'] = v;
+    } else if (/Absolute\s*Humidity/i.test(line)){
+      const v = oneNum(line, new RegExp('Absolute\\s*Humidity|' + AH_UNIT.source, 'gi'));
+      if (v != null) out[role + 'Ah'] = v;
     }
   }
   return Object.keys(out).length ? out : null;
@@ -264,17 +383,29 @@ function parseTesto(text){
   found.returnRh   = plausible(conds.returnRh, 0, 100);
   found.supplyRh   = plausible(conds.supplyRh, 0, 100);
 
-  // Believe the dew point over the humidity when they disagree: two readings
-  // of the same air cannot both be right, and this is what turns a misread
-  // 95 %RH back into the 55 %RH that was actually on the screen.
+  // Cross-check each probe's readings against each other. Four readings of the
+  // same air, any two of which imply the other two, is what turns a misread
+  // 95 %RH back into 55, and a supply temperature read as 92.9 back into 52.9.
+  const FIELD = {temp: 'Temp', rh: 'Rh'};
   for (const side of ['return', 'supply']){
-    const implied = rhFromDewPoint(found[side + 'Temp'], plausible(conds[side + 'Dew'], -60, 200));
-    if (implied == null) continue;
-    const read = found[side + 'Rh'];
-    if (read == null || Math.abs(read - implied) > RH_TOLERANCE_PCT){
-      found[side + 'Rh'] = implied;
-      found[side + 'RhWas'] = read;      // disclosed in the review panel
+    const read = {
+      temp: found[side + 'Temp'],
+      rh:   found[side + 'Rh'],
+      dew:  plausible(conds[side + 'Dew'], -60, 200),
+      ah:   plausible(conds[side + 'Ah'], 0, 60),
+    };
+    for (const f of PSY_FIELDS) if (read[f] == null) delete read[f];
+
+    const {fixed, conflict} = reconcilePsy(read);
+    // Only the two readings the report carries are worth correcting on screen;
+    // a misread dew point that never leaves this function is not news.
+    if (fixed && FIELD[fixed.field]){
+      found[side + FIELD[fixed.field]] = fixed.now;
+      found[side + FIELD[fixed.field] + 'Was'] = fixed.was;   // disclosed in the panel
     }
+    // Something on this probe is wrong and the screen does not say what. Say
+    // so: a flagged reading gets checked, a silently wrong one gets printed.
+    if (conflict) found[side + 'Conflict'] = true;
   }
   return found;
 }
@@ -330,9 +461,16 @@ function ocrReview(i, phase, found, context){
   // screenshot that gave up its temperatures looking like it held no output.
   const chips = found.btuh == null ? candidates : [];
 
-  const fixes = ['return', 'supply']
-    .filter(side => found[side + 'RhWas'] != null)
-    .map(side => `${side} humidity read as ${found[side + 'RhWas']}%, corrected to ${found[side + 'Rh']}% from the dew point`);
+  const CORRECTABLE = [['Temp', 'temperature', '°F'], ['Rh', 'humidity', '%']];
+  const fixes = [];
+  const conflicts = [];
+  for (const side of ['return', 'supply']){
+    for (const [key, word, unit] of CORRECTABLE){
+      if (found[side + key + 'Was'] == null) continue;
+      fixes.push(`${side} ${word} read as ${found[side + key + 'Was']}${unit}, corrected to ${found[side + key]}${unit}`);
+    }
+    if (found[side + 'Conflict']) conflicts.push(side);
+  }
 
   const missing = found.btuh == null
     ? (deltaT
@@ -352,7 +490,8 @@ function ocrReview(i, phase, found, context){
       `<button type="button" class="capchip${c.labelled ? ' lab' : ''}" data-cap="${i}:${phase}:${c.value}">
          ${fmt(c.value, 0)}${c.labelled ? ' <span>BTU</span>' : ''}
        </button>`).join('')}</div>` : ''}
-    ${fixes.length ? `<div class="capocrmsg">Cross-checked against the dew point: ${esc(fixes.join('; '))}.</div>` : ''}
+    ${fixes.length ? `<div class="capocrmsg">Cross-checked against the other readings on screen: ${esc(fixes.join('; '))}.</div>` : ''}
+    ${conflicts.length ? `<div class="capocrmsg bad">The ${esc(conflicts.join(' and '))} readings on this screenshot do not agree with each other, so one of them was misread — and there is not enough on the screen to say which. Check ${conflicts.length > 1 ? 'those rows' : 'that row'} against the probe and correct ${conflicts.length > 1 ? 'them' : 'it'} below.</div>` : ''}
     <button type="button" class="capbtn small" data-use="${i}:${phase}">Use these readings</button>`);
   return true;
 }

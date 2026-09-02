@@ -133,12 +133,31 @@ The ΔT screen genuinely has no output on it, so a capacity missing from *that*
 screen is named as such, with a pointer to the Cooling and Heating Output
 screen, rather than reported as a failed read.
 
-**Humidity is cross-checked against the dew point.** Testo shows dry bulb, dew
-point and relative humidity, so the three constrain each other. A real
-screenshot read `55.0 %RH` back as `95.0`; at 68.8°F with a 52.0°F dew point the
-humidity is 55%, so the dew point settles it (Magnus formula, `rhFromDewPoint`).
-When the two disagree by more than 3 points the dew point wins, and the review
-panel says so and names both figures — the correction is never made quietly.
+**Every reading is cross-checked against the others.** Testo shows four
+readings of the same air — dry bulb, relative humidity, dew point and absolute
+humidity — and any two of them imply the other two (Magnus throughout). That
+redundancy is the only thing standing between an OCR digit error and a figure
+on a customer's document, so `reconcilePsy` uses it in every direction.
+
+It has caught two real misreads. A screenshot read `55.0 %RH` back as `95.0`:
+at 68.8°F with a 52.0°F dew point the humidity is 55%, so the rest of the
+screen settles it. Then a supply air temperature of `52.9°F` came back as
+`92.9°F` — with the humidity beside it read correctly, a check that only ever
+doubted the humidity had nothing to say, and a wrong temperature reached the
+report.
+
+The rule is: assume one reading is wrong at a time, and act on that only when
+the rest agree with each other. Four readings identify the culprit outright.
+Three can prove something is wrong without proving *which* — any of the three
+could be the odd one out — so unless a single-digit substitution picks out
+exactly one candidate (`92.9` is one character from `52.9`), the disagreement
+is **reported rather than resolved**: the panel says which probe disagrees and
+that the screen does not say which reading is at fault. Inventing an answer
+there would put a number nobody measured on a customer's document. Two readings
+cannot disagree at all, and nothing is claimed from them.
+
+Corrections are never made quietly — the panel names the old figure and the new
+one either way.
 
 A value only counts when its line yields exactly one number. OCR split `51.9`
 into `51 9` on a real screenshot, and guessing between the halves would have

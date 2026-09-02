@@ -1992,8 +1992,8 @@ test('the correction is disclosed rather than done quietly', async ({ browser, o
   await page.selectOption('#capCount', '1');
   await page.evaluate(t => ocrReview(0, 'before', parseTesto(t)), TESTO_OUTPUT_TEXT);
   const panel = await page.$eval('#capO-0-before', e => e.textContent.replace(/\s+/g, ' '));
-  ok(/Cross-checked against the dew point/.test(panel), 'the panel says a check happened');
-  ok(/read as 95%, corrected to 55.1%/.test(panel), `and names both figures, got "${panel}"`);
+  ok(/Cross-checked against the other readings on screen/.test(panel), 'the panel says a check happened');
+  ok(/humidity read as 95%, corrected to 55.1%/.test(panel), `and names both figures, got "${panel}"`);
   await page.close();
 });
 
@@ -2004,6 +2004,73 @@ test('an ambiguous dew point is ignored rather than trusted', async ({ browser, 
   const r = await parse(page, TESTO_DT_TEXT);
   eq(r.returnRh, 54.9, 'the read humidity stands');
   ok(!('returnRhWas' in r), 'no correction claimed from a split number');
+  await page.close();
+});
+
+/* Reported from a live job: a supply air temperature of 52.9°F came back as
+   92.9°F. The humidity beside it was read correctly, so the old check — which
+   only ever doubted the humidity — had nothing to say and a wrong temperature
+   went to the report. Testo shows four readings of the same air and any two
+   imply the other two, so the redundancy is used in every direction now. */
+test('a misread temperature is caught by the readings around it', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const r = await page.evaluate(() => reconcilePsy({temp: 92.9, rh: 94.1, dew: 51.2, ah: 9.77}));
+  eq(r.fixed, {field: 'temp', was: 92.9, now: 52.9}, '52.9 recovered from the humidity and dew point');
+  eq(r.conflict, false, 'and settled, not merely flagged');
+
+  // The dew point is the reading most often lost to a split decimal; absolute
+  // humidity alone still settles it, because 92.9 is one digit off 52.9.
+  eq((await page.evaluate(() => reconcilePsy({temp: 92.9, rh: 94.1, ah: 9.77}))).fixed,
+    {field: 'temp', was: 92.9, now: 52.9}, 'three readings are enough with a single-digit slip');
+  await page.close();
+});
+
+test('correct readings are left alone', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  for (const air of [{temp: 50.3, rh: 81.0, dew: 44.7, ah: 7.70},
+                     {temp: 68.8, rh: 54.9, ah: 9.75},
+                     {temp: 52.9, rh: 94.1, dew: 51.2, ah: 9.77}]){
+    const r = await page.evaluate(a => reconcilePsy(a), air);
+    eq(r.fixed, null, `nothing invented for ${JSON.stringify(air)}`);
+    eq(r.conflict, false, 'and nothing flagged');
+  }
+  await page.close();
+});
+
+/* Three readings can prove something is wrong without proving which one it is.
+   Inventing an answer there would put a number on a customer's document that
+   nobody measured, so the disagreement is reported instead. */
+test('an unresolvable disagreement is reported, not guessed at', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const r = await page.evaluate(() => reconcilePsy({temp: 74.0, rh: 40.0, dew: 62.0}));
+  eq(r.fixed, null, 'no reading is corrected');
+  eq(r.conflict, true, 'but the disagreement is not swallowed');
+  eq(await page.evaluate(() => reconcilePsy({temp: 92.9, rh: 94.1}).conflict), false,
+    'two readings on their own cannot disagree — there is nothing to check against');
+  await page.close();
+});
+
+test('a flagged probe is called out in the review panel', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await page.evaluate(() => ocrReview(0, 'after',
+    {btuh: 9950, supplyTemp: 74.0, supplyRh: 40.0, supplyConflict: true}, {}));
+  const panel = await page.$eval('#capO-0-after', e => e.textContent.replace(/\s+/g, ' '));
+  ok(/supply readings on this screenshot do not agree/.test(panel), `got "${panel}"`);
+  ok(/not enough on the screen to say which/.test(panel), 'and does not pretend to know which');
+  await page.close();
+});
+
+test('absolute humidity is read off both Testo layouts', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  // It is the fourth reading, and the one that settles a misread temperature
+  // when the dew point is lost to a split decimal.
+  eq(await page.evaluate(t => { const l = t.split('\n').map(x => x.trim()).filter(Boolean);
+      const c = parseTwoColumn(l); return [c.returnAh, c.supplyAh]; }, TESTO_OUTPUT_TEXT),
+    [9.77, 7.70], 'side by side, with the g/m³ unit stripped');
+  eq(await page.evaluate(t => { const l = t.split('\n').map(x => x.trim()).filter(Boolean);
+      const c = parseProbeCards(l); return [c.returnAh, c.supplyAh]; }, TESTO_DT_TEXT),
+    [9.75, 7.70], 'and one card per probe');
   await page.close();
 });
 
