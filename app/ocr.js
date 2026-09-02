@@ -15,7 +15,7 @@
  * go onto a customer's verification document, so a human picks it — always.
  */
 
-const OCR = {lib: null, worker: null, target: null, found: {}};
+const OCR = {lib: null, worker: null, target: null, found: {}, context: {}};
 
 /* A plausible delivered-capacity reading. Anything outside this is not a
    BTU/h figure and only adds noise to the choices. */
@@ -59,24 +59,94 @@ async function ocrWorker(onProgress){
  * screenshot of a screen we do not recognise. Probe serials (651, 877) sit in
  * this range, which is exactly why the structured parse is tried first.
  */
+/* Probe serials (651, 877) sit squarely in the BTU/h range, and offering
+   "877" as a capacity is how this feature lost its credibility the first time.
+   Judge each number by what sits either side of it rather than by its line: a
+   line can carry a capacity AND a humidity, and throwing the line away would
+   take the capacity with it. */
+const SERIAL_BEFORE = /605i\s*\D{0,3}$|testo\s*$/i;      // "testo 605i - 877"
+const MODEL_AFTER = /^i/i;                              // the "605" of 605i
+const OTHER_UNIT_AFTER = /^\s*(°\s*[FC]|%|r?H\b|g\s*\/\s*m)/i;   // a temperature or a humidity
+
+function notACapacity(before, after){
+  if (SERIAL_BEFORE.test(before)) return true;
+  if (MODEL_AFTER.test(after) || OTHER_UNIT_AFTER.test(after)) return true;
+  return /[:.]\s*$/.test(before) && /^\s*:/.test(after);   // part of a clock
+}
+
 function btuCandidates(text){
-  const flat = String(text || '').replace(/\s+/g, ' ');
   const seen = new Map();
-  const re = /(\d{1,3}(?:[.,]\d{3})+|\d{3,6})(?:[.,]\d+)?/g;
-  let m;
-  while ((m = re.exec(flat)) !== null){
-    const value = parseInt(m[1].replace(/[.,]/g, ''), 10);
-    if (!Number.isFinite(value) || value < OCR_MIN_BTUH || value > OCR_MAX_BTUH) continue;
-    const around = flat.slice(Math.max(0, m.index - 24), m.index + m[0].length + 24);
-    const labelled = /btu/i.test(around);
-    const prev = seen.get(value);
-    if (!prev || (labelled && !prev.labelled)) seen.set(value, {value, labelled, around: around.trim()});
+  for (const line of String(text || '').split('\n')){
+    const re = /(\d{1,3}(?:[.,\u00a0 ]\d{3})+|\d{3,6})(?:[.,]\d+)?/g;
+    let m;
+    while ((m = re.exec(line)) !== null){
+      const before = line.slice(0, m.index), after = line.slice(m.index + m[0].length);
+      if (notACapacity(before, after)) continue;
+      const value = btuValue(m[1]);
+      if (!Number.isFinite(value) || value < OCR_MIN_BTUH || value > OCR_MAX_BTUH) continue;
+      const around = line.slice(Math.max(0, m.index - 24), m.index + m[0].length + 24);
+      const labelled = /btu/i.test(around);
+      const prev = seen.get(value);
+      if (!prev || (labelled && !prev.labelled)) seen.set(value, {value, labelled, around: around.trim()});
+    }
   }
   return [...seen.values()].sort((a, b) =>
     (b.labelled - a.labelled) || (b.value - a.value)).slice(0, 6);
 }
 
 /* ---------------------------- reading a Testo screen ---------------------- */
+
+/**
+ * The BTU/h unit as OCR actually renders it.
+ *
+ * The slash is the character it gets wrong most often — it comes back as a 1,
+ * a lowercase l, a capital I or a pipe depending on the screenshot — and the
+ * graph's own axis label is printed "BTUH" with no slash at all. Requiring a
+ * literal "BTU/h" meant one mangled character between the number and the unit
+ * threw the whole capacity away and left the technician with temperatures and
+ * no output, which is exactly what happened on a real after-screenshot.
+ */
+const BTU_UNIT = 'B\\s*T\\s*U\\s*[/\\\\|1lI]?\\s*[Hh]';
+
+/**
+ * A capacity as written on screen, turned into a number.
+ *
+ * Group separators are dropped; a separator followed by one or two digits is a
+ * decimal tail and goes with them. OCR also splits the thousands separator
+ * into a space often enough to be worth allowing ("33 540").
+ */
+function btuValue(raw){
+  const s = String(raw).replace(/[\u00a0\s]/g, '');
+  const dec = s.match(/^(.*)[.,](\d{1,2})$/);
+  const digits = (dec ? dec[1] : s).replace(/\D/g, '');
+  return digits ? parseInt(digits, 10) : null;
+}
+
+/**
+ * The delivered capacity, anchored on the unit so a probe serial can never be
+ * mistaken for one. Where a screen carries more than one BTU figure, the one
+ * on the "Current Value" row wins — that is the live reading, the others are
+ * axis labels and graph bounds.
+ */
+function capacityFrom(text){
+  const flat = String(text || '');
+  const re = new RegExp('([\\d][\\d.,\u00a0 ]{0,9})\\s*' + BTU_UNIT, 'g');
+  let m, best = null;
+  while ((m = re.exec(flat)) !== null){
+    const v = plausible(btuValue(m[1]), OCR_MIN_BTUH, OCR_MAX_BTUH);
+    if (v == null) continue;
+    const line = flat.slice(flat.lastIndexOf('\n', m.index) + 1, m.index + m[0].length);
+    const live = /current\s*value|output/i.test(line);
+    if (!best || (live && !best.live)) best = {value: v, live};
+  }
+  return best ? best.value : null;
+}
+
+/** Is this the ΔT screen? It carries no output figure at all — worth saying so
+    rather than reporting a failed read on a screenshot that never had one. */
+function isDeltaTScreen(text){
+  return /Differential\s*Temperature/i.test(String(text || ''));
+}
 
 const numsOn = line => (String(line).match(/-?\d+(?:[.,]\d+)?/g) || [])
   .map(t => parseFloat(t.replace(',', '.')));
@@ -186,12 +256,7 @@ function parseTesto(text){
   const lines = String(text || '').split('\n').map(l => l.trim()).filter(Boolean);
   const found = {btuh: null, returnTemp: null, returnRh: null, supplyTemp: null, supplyRh: null};
 
-  // Anchored on the unit, so probe serials cannot be mistaken for a capacity.
-  const cap = String(text).match(/([\d][\d.,]*)\s*BTU\s*\/?\s*[Hh]/);
-  if (cap){
-    const v = parseInt(cap[1].replace(/[.,]/g, ''), 10);
-    found.btuh = plausible(v, OCR_MIN_BTUH, OCR_MAX_BTUH);
-  }
+  found.btuh = capacityFrom(text);
 
   const conds = parseTwoColumn(lines) || parseProbeCards(lines) || {};
   found.returnTemp = plausible(conds.returnTemp, -40, 200);
@@ -250,24 +315,58 @@ const OCR_ROWS = [
  * as 95.0, so these have to be looked at before they go anywhere near a
  * customer's report.
  */
-function ocrReview(i, phase, found){
+function ocrReview(i, phase, found, context){
   const rows = OCR_ROWS
     .map(r => [r.label, r.parts.filter(([k]) => found[k] != null).map(([k, f]) => f(found[k])).join(' · ')])
     .filter(([, v]) => v);
+  // With nothing recognised there is nothing to review: the caller falls back
+  // to bare chips, which commit on a single tap. This panel is for a screen we
+  // did read, where a chip is one value among several and has to wait for the
+  // same confirmation as the rest.
   if (!rows.length) return false;
+  const {candidates = [], deltaT = false} = context || {};
+  // A capacity we could not anchor is still worth offering: the technician
+  // reads it off the screen in front of them and taps it. Dropping it left a
+  // screenshot that gave up its temperatures looking like it held no output.
+  const chips = found.btuh == null ? candidates : [];
 
   const fixes = ['return', 'supply']
     .filter(side => found[side + 'RhWas'] != null)
     .map(side => `${side} humidity read as ${found[side + 'RhWas']}%, corrected to ${found[side + 'Rh']}% from the dew point`);
+
+  const missing = found.btuh == null
+    ? (deltaT
+        ? 'No output on this screen — the Differential Temperature screen does not carry one. For the capacity, screenshot the Cooling and Heating Output screen.'
+        : chips.length
+          ? 'The output figure could not be read with certainty. Tap the one that matches the screen, or type it in below.'
+          : 'No output figure found on this screen. Type it in below.')
+    : '';
 
   OCR.found[`${i}:${phase}`] = found;
   ocrSay(i, phase, `
     <div class="capocrmsg"><b>${phaseWord(phase)}</b> — read from the screenshot. <b>Check every value against the screen</b> before using it; the reader can misread a digit.</div>
     <div class="capocrrows">${rows.map(([k, v]) =>
       `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>
+    ${missing ? `<div class="capocrmsg${chips.length ? '' : ' bad'}">${esc(missing)}</div>` : ''}
+    ${chips.length ? `<div class="capocrpick">${chips.map(c =>
+      `<button type="button" class="capchip${c.labelled ? ' lab' : ''}" data-cap="${i}:${phase}:${c.value}">
+         ${fmt(c.value, 0)}${c.labelled ? ' <span>BTU</span>' : ''}
+       </button>`).join('')}</div>` : ''}
     ${fixes.length ? `<div class="capocrmsg">Cross-checked against the dew point: ${esc(fixes.join('; '))}.</div>` : ''}
     <button type="button" class="capbtn small" data-use="${i}:${phase}">Use these readings</button>`);
   return true;
+}
+
+/**
+ * Choosing a capacity from the chips folds it into the same review panel
+ * rather than filling it in on the spot, so one "Use these readings" still
+ * commits the whole screenshot and the temperatures are not lost on the way.
+ */
+function ocrPickCapacity(i, phase, value, context){
+  const found = OCR.found[`${i}:${phase}`];
+  if (!found) return;
+  found.btuh = value;
+  ocrReview(i, phase, found, context);
 }
 
 function ocrApply(i, phase){
@@ -318,8 +417,11 @@ async function runOcr(i, phase, file){
     const {data} = await worker.recognize(file);
     const text = data && data.text;
     // Structured first: it is anchored on labels, so probe serials cannot be
-    // mistaken for a capacity. Chips are the fallback for an unknown screen.
-    if (!ocrReview(i, phase, parseTesto(text))) ocrOffer(i, phase, btuCandidates(text));
+    // mistaken for a capacity. Chips are the fallback — for a screen we do not
+    // recognise at all, and for one we do whose capacity would not anchor.
+    const context = {candidates: btuCandidates(text), deltaT: isDeltaTScreen(text)};
+    OCR.context[`${i}:${phase}`] = context;
+    if (!ocrReview(i, phase, parseTesto(text), context)) ocrOffer(i, phase, context.candidates);
   } catch (err) {
     console.error(err);
     ocrSay(i, phase, `<div class="capocrmsg bad">That screenshot could not be read. Type the values in instead.</div>`);

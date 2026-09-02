@@ -2022,8 +2022,78 @@ test('probe serials are never mistaken for a capacity', async ({ browser, origin
   const page = await openApp(browser, origin, { reportType: 'capacity' });
   // This was the reported bug: the ΔT screen offered 877, 651 and 198 as readings.
   eq((await parse(page, TESTO_DT_TEXT)).btuh, null, 'no capacity invented from a screen that has none');
+  // The fallback chips now appear beside a screen we DID parse, so they have
+  // to be clean too — a serial offered as a capacity is what discredited this
+  // feature the first time.
   const chips = await page.evaluate(t => btuCandidates(t).map(c => c.value), TESTO_DT_TEXT);
-  ok(chips.includes(651) || chips.includes(877), 'the loose fallback still would have offered them');
+  eq(chips, [], 'and none of the probe serials are offered as one either');
+  await page.close();
+});
+
+/* The unit is the anchor, and OCR mangles it. On a real after-screenshot the
+   capacity was dropped entirely and the technician was handed temperatures and
+   no output — the number was on screen, the slash was not what we expected. */
+test('a mangled BTU/h unit still yields the capacity', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const read = t => page.evaluate(x => capacityFrom(x), t);
+  for (const unit of ['BTU/h', 'BTU/H', 'BTUh', 'BTUH', 'BTU|h', 'BTU1h', 'BTUIh', 'BTU / h'])
+    eq(await read(`Current Value 33,540 ${unit}`), 33540, `unit read as "${unit}"`);
+  eq(await read('Current Value 33 540 BTU/h'), 33540, 'a thousands separator read as a space');
+  eq(await read('Current Value 9,950.0 BTU/h'), 9950, 'a decimal tail is not a thousands group');
+  eq(await read('Current Value 1 8.5 °F'), null, 'nothing to anchor on, nothing claimed');
+  await page.close();
+});
+
+/* Where the graph and the live row both carry a figure, the live one is the
+   reading; the other is an axis bound. */
+test('the live value wins over another figure on the same screen', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  eq(await page.evaluate(() => capacityFrom('40,000 BTU/h\nCurrent Value 33,540 BTU/h')), 33540,
+    'the Current Value row, not the scale');
+  await page.close();
+});
+
+/* The reported glitch: the after screenshot gave up its temperatures, so the
+   review panel opened — and the chip fallback, which only ran when NOTHING
+   parsed, never got a chance. The output was on the screen and the app offered
+   no way to take it. */
+test('a screen that parses but hides its capacity still offers the number', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  // Same screen, with the unit corrupted past recognition.
+  const text = TESTO_OUTPUT_TEXT.replace('33,540 BTU/h', '33,540 8TWh');
+  await page.evaluate(t => {
+    const context = {candidates: btuCandidates(t), deltaT: isDeltaTScreen(t)};
+    OCR.context['0:after'] = context;
+    ocrReview(0, 'after', parseTesto(t), context);
+  }, text);
+
+  const panel = await page.$eval('#capO-0-after', e => e.textContent.replace(/\s+/g, ' '));
+  ok(/output figure could not be read/i.test(panel), `the gap is named, got "${panel}"`);
+  eq(await page.$$eval('#capO-0-after [data-cap]', els => els.map(e => e.textContent.trim().split(/\s+/)[0])),
+    ['33,540'], 'and the figure is offered as a choice');
+
+  // Taking it must not cost the temperatures that parsed correctly.
+  await page.click('#capO-0-after [data-cap]');
+  ok(/33,540 BTU\/h/.test(await page.$eval('#capO-0-after', e => e.textContent)), 'the capacity joins the review');
+  ok(await page.$('#capO-0-after [data-use]'), 'and one button still commits the whole screenshot');
+  await page.click('#capO-0-after [data-use]');
+  eq(await page.evaluate(() => [CAP.heads[0].after.btuh, CAP.heads[0].after.returnTemp, CAP.heads[0].after.supplyTemp]),
+    ['33540', '68.8', '50.3'], 'capacity and both air temperatures land together');
+  await page.close();
+});
+
+/* The ΔT screen genuinely has no output on it. Saying so beats reporting a
+   failed read on a screenshot that never carried one. */
+test('the ΔT screen is named rather than reported as a bad read', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await page.evaluate(t => ocrReview(0, 'after', parseTesto(t),
+    {candidates: btuCandidates(t), deltaT: isDeltaTScreen(t)}), TESTO_DT_TEXT);
+  const panel = await page.$eval('#capO-0-after', e => e.textContent.replace(/\s+/g, ' '));
+  ok(/Differential Temperature screen does not carry one/.test(panel), `got "${panel}"`);
+  ok(/Cooling and Heating Output/.test(panel), 'and says which screen does');
+  eq(await page.$$eval('#capO-0-after [data-cap]', els => els.length), 0, 'nothing invented to offer');
   await page.close();
 });
 

@@ -101,11 +101,37 @@ loose numbers:
   `PROBES` table maps 651 to return and 877 to supply; that is what the table
   is for. This screen has no capacity and the parser correctly reports none.
 
-Capacity is anchored on the literal `BTU/h`, which is what stops a probe serial
-being read as a reading. That was a real bug: the ΔT screen used to offer 877,
-651 and 198 as capacities. A loose number-scanning fallback still exists for a
-screen the parser does not recognise, and it still offers those — which is
-precisely why the structured parse runs first.
+Capacity is anchored on the unit, which is what stops a probe serial being read
+as a reading. That was a real bug: the ΔT screen used to offer 877, 651 and 198
+as capacities.
+
+Anchoring on the *literal* `BTU/h` was too strict, though, and cost a real
+after-screenshot its output. The slash is the character OCR gets wrong most
+often — it comes back as `1`, `l`, `I` or `|` — and the graph's own axis label
+is printed `BTUH` with no slash at all, so one mangled character threw the
+capacity away. `BTU_UNIT` accepts the shapes it actually arrives in, and
+`btuValue` handles a thousands separator read as a space (`33 540`) and a
+decimal tail that is not a thousands group (`9,950.0`). Where a screen carries
+more than one figure, the one on the *Current Value* row wins; the others are
+axis bounds.
+
+**A parsed screen that hides its capacity still offers the number.** The
+loose number-scanning fallback used to run only when *nothing* parsed, so a
+screenshot that gave up its temperatures but not its output showed temperatures
+and no way to take the figure — reported from the field, and the second half of
+the same bug. The review panel now offers the candidates as chips when it could
+not anchor one, folded into the panel so choosing one does not discard the
+readings beside it and one *Use these readings* still commits the lot.
+
+Because those chips now appear next to a screen we *did* parse, the candidate
+list had to stop offering probe serials. Each number is judged by what sits
+either side of it — not by its line, since a line can hold a capacity and a
+humidity both — and anything reading as a serial (`testo 605i - 877`), a model
+(`605i`), a temperature, a humidity or a clock is dropped.
+
+The ΔT screen genuinely has no output on it, so a capacity missing from *that*
+screen is named as such, with a pointer to the Cooling and Heating Output
+screen, rather than reported as a failed read.
 
 **Humidity is cross-checked against the dew point.** Testo shows dry bulb, dew
 point and relative humidity, so the three constrain each other. A real

@@ -569,6 +569,14 @@ function capInit(){
       ocrAccept(+i, phase, +value);
       return;
     }
+    // The same chip inside a review panel folds into it instead of committing,
+    // so picking a capacity does not throw away the temperatures beside it.
+    const c = e.target.closest('[data-cap]');
+    if (c){
+      const [i, phase, value] = c.dataset.cap.split(':');
+      ocrPickCapacity(+i, phase, +value, OCR.context[`${i}:${phase}`]);
+      return;
+    }
     const u = e.target.closest('[data-use]');
     if (u){
       const [i, phase] = u.dataset.use.split(':');
