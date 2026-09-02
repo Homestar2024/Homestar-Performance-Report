@@ -1244,6 +1244,26 @@ test('the app still loads from cache when the network is gone', async ({ browser
   await page.close();
 });
 
+test('an idle app takes a new version straight away', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  eq(await page.evaluate(() => workInProgress()), false, 'nothing to lose on a fresh screen');
+  await page.fill('#cName', 'Todd Brown');
+  eq(await page.evaluate(() => workInProgress()), false, 'client details alone are quick to retype');
+  await page.close();
+});
+
+test('an app with work on screen asks before taking a new version', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, { heads: [CAP_JOB.heads[0]] });
+  ok(await page.evaluate(() => workInProgress()), 'typed readings must not be thrown away');
+
+  const page2 = await openApp(browser, origin);
+  await upload(page2, 1, before);
+  ok(await page2.evaluate(() => workInProgress()), 'nor an uploaded report');
+  await page2.close();
+  await page.close();
+});
+
 test('a new version waits for the tech, then takes over on request', async ({ browser }) => {
   // Serve a throwaway copy so the deployed files can be mutated mid-test.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homestar-pwa-'));
@@ -1254,6 +1274,8 @@ test('a new version waits for the tech, then takes over on request', async ({ br
     const page = await openApp(browser, origin, { serviceWorker: true });
     await swReady(page);
     ok(await page.$eval('#updateStrip', e => e.hidden), 'a first install is not an "update"');
+    // Put work on screen; otherwise the new version takes over without asking.
+    await upload(page, 1, before);
 
     // Ship a new release. Read the version out rather than assuming one, so
     // bumping sw.js for a real change cannot quietly neuter this test.
@@ -1471,7 +1493,7 @@ test('a screenshot fills the supporting readings in the form, not just the state
   const fields = await page.$$eval('.caphd.open .capsub input',
     els => Object.fromEntries(els.filter(e => e.dataset.phase === 'before').map(e => [e.dataset.key, e.value])));
   eq([fields.returnTemp, fields.returnRh, fields.supplyTemp, fields.supplyRh],
-    ['68.8', '95', '50.3', '81'], 'the boxes on screen show the readings, not just CAP');
+    ['68.8', '55.1', '50.3', '81'], 'the boxes on screen show the readings, not just CAP');
   ok(await page.$eval('.caphd.open details', e => e.open), 'and the section is open so they are visible');
   await page.close();
 });
@@ -1786,8 +1808,8 @@ const parse = (page, text) => page.evaluate(t => parseTesto(t), text);
 test('a real Cooling and Heating Output screen parses in full', async ({ browser, origin }) => {
   const page = await openApp(browser, origin, { reportType: 'capacity' });
   eq(await parse(page, TESTO_OUTPUT_TEXT),
-    {btuh: 33540, returnTemp: 68.8, returnRh: 95, supplyTemp: 50.3, supplyRh: 81},
-    'capacity and both probes, columns read left to right');
+    {btuh: 33540, returnTemp: 68.8, returnRh: 55.1, supplyTemp: 50.3, supplyRh: 81, returnRhWas: 95},
+    'capacity and both probes, with the misread humidity corrected from the dew point');
   await page.close();
 });
 
@@ -1796,6 +1818,50 @@ test('a real Differential Temperature screen maps probes by serial', async ({ br
   eq(await parse(page, TESTO_DT_TEXT),
     {btuh: null, returnTemp: 68.8, returnRh: 54.9, supplyTemp: 50.3, supplyRh: 81},
     '651 is the return probe, 877 the supply; that screen carries no capacity');
+  await page.close();
+});
+
+/* Testo shows dry bulb and dew point alongside humidity, so the three check
+   each other. A real screenshot read 55.0 %RH back as 95.0; at 68.8°F with a
+   52.0°F dew point the humidity is 55%, so the dew point settles it. */
+test('a misread humidity is corrected from the dew point', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const r = await parse(page, TESTO_OUTPUT_TEXT);
+  eq(r.returnRh, 55.1, 'corrected to what the dew point implies');
+  eq(r.returnRhWas, 95, 'and what was actually read is kept, for disclosure');
+  eq(r.supplyRh, 81, 'a humidity that agrees with its dew point is left alone');
+  ok(!('supplyRhWas' in r), 'and is not flagged as corrected');
+  await page.close();
+});
+
+test('the correction is disclosed rather than done quietly', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await page.evaluate(t => ocrReview(0, 'before', parseTesto(t)), TESTO_OUTPUT_TEXT);
+  const panel = await page.$eval('#capO-0-before', e => e.textContent.replace(/\s+/g, ' '));
+  ok(/Cross-checked against the dew point/.test(panel), 'the panel says a check happened');
+  ok(/read as 95%, corrected to 55.1%/.test(panel), `and names both figures, got "${panel}"`);
+  await page.close();
+});
+
+test('an ambiguous dew point is ignored rather than trusted', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  // On the ΔT screen "51.9" came back as "51 9"; guessing between the halves
+  // would have replaced a correct 54.9 %RH with nonsense.
+  const r = await parse(page, TESTO_DT_TEXT);
+  eq(r.returnRh, 54.9, 'the read humidity stands');
+  ok(!('returnRhWas' in r), 'no correction claimed from a split number');
+  await page.close();
+});
+
+test('the humidity maths matches a psychrometric chart', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const [warm, cold, impossible] = await page.evaluate(() => [
+    rhFromDewPoint(68.8, 52.0), rhFromDewPoint(50.3, 44.7), rhFromDewPoint(60, 70),
+  ]);
+  ok(Math.abs(warm - 55) < 1.5, `68.8°F / 52.0°F dew is about 55% RH, got ${warm}`);
+  ok(Math.abs(cold - 81) < 1.5, `50.3°F / 44.7°F dew is about 81% RH, got ${cold}`);
+  eq(impossible, null, 'a dew point above dry bulb is a misread, not a reading');
   await page.close();
 });
 
@@ -1820,7 +1886,7 @@ test('a parsed screen fills the readings only after they are used', async ({ bro
   eq(await page.evaluate(() => {
     const b = CAP.heads[0].before;
     return [b.btuh, b.returnTemp, b.returnRh, b.supplyTemp, b.supplyRh, b.btuhSource];
-  }), ['33540', '68.8', '95', '50.3', '81', 'ocr'], 'capacity and conditions all land');
+  }), ['33540', '68.8', '55.1', '50.3', '81', 'ocr'], 'capacity and conditions all land');
   eq(await page.evaluate(() => CAP.mode), 'cooling', 'and the mode follows from supply being colder');
   await page.close();
 });
@@ -1835,7 +1901,7 @@ test('parsed conditions reach the operating conditions section', async ({ browse
   await page.evaluate(() => { CAP.heads[0].location = 'Living Room'; CAP.heads[0].after.btuh = '35000'; renderHeads(); setStatus(); });
   await page.click('#gen');
   const conds = await page.$eval('#sheet .captwo', e => e.textContent.replace(/\s+/g, ' '));
-  ok(/RA 68.8°F \/ 95%/.test(conds), `before conditions printed, got "${conds}"`);
+  ok(/RA 68.8°F \/ 55.1%/.test(conds), `before conditions printed, got "${conds}"`);
   ok(/SA 50.3°F \/ 81%/.test(conds), 'supply conditions printed');
   await page.close();
 });

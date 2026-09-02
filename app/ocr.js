@@ -82,6 +82,37 @@ const numsOn = line => (String(line).match(/-?\d+(?:[.,]\d+)?/g) || [])
   .map(t => parseFloat(t.replace(',', '.')));
 
 /**
+ * A value only counts when the line yields exactly one number. OCR sometimes
+ * splits a decimal — "51.9" came back as "51 9" on a real screenshot — and
+ * guessing between the halves is worse than having no reading.
+ */
+function oneNum(line, labelRe){
+  const v = numsOn(String(line).replace(labelRe, ' '));
+  return v.length === 1 ? v[0] : null;
+}
+
+/* How far a read humidity may sit from the one the dew point implies before
+   the dew point is believed instead. */
+const RH_TOLERANCE_PCT = 3;
+
+/**
+ * Relative humidity implied by dry bulb and dew point (Magnus).
+ *
+ * Testo shows both, which makes each a check on the other: at 68.8°F with a
+ * 52.0°F dew point the humidity is 55%, so a reading of 95% is a misread and
+ * not a measurement. This is what catches a digit error on a value headed for
+ * a customer's report.
+ */
+function rhFromDewPoint(tempF, dewF){
+  if (typeof tempF !== 'number' || typeof dewF !== 'number') return null;
+  if (dewF > tempF + 0.5) return null;             // impossible; one is misread
+  const c = f => (f - 32) * 5 / 9;
+  const es = t => 6.112 * Math.exp(17.62 * t / (243.12 + t));
+  const rh = 100 * es(c(dewF)) / es(c(tempF));
+  return (rh >= 0 && rh <= 100.5) ? Math.round(rh * 10) / 10 : null;
+}
+
+/**
  * Values from a "Cooling and Heating Output" screen, where the two probes sit
  * side by side and OCR reads across: the label line carries both captions and
  * the line under it carries both numbers, left column first.
@@ -104,12 +135,14 @@ function parseTwoColumn(lines){
   };
   const temps = pairUnder(/Air\s*Temperature/gi);
   const rh    = pairUnder(/Relative\s*Humidity/gi);
+  const dew   = pairUnder(/Dew\s*Point/gi);
   if (!temps && !rh) return null;
 
   const pick = (arr, side) => !arr ? null : arr[(side === 'return') === returnFirst ? 0 : 1];
   return {
     returnTemp: pick(temps, 'return'), supplyTemp: pick(temps, 'supply'),
     returnRh:   pick(rh, 'return'),    supplyRh:   pick(rh, 'supply'),
+    returnDew:  pick(dew, 'return'),   supplyDew:  pick(dew, 'supply'),
   };
 }
 
@@ -130,11 +163,14 @@ function parseProbeCards(lines){
     if (head){ role = roleOf(head[1]); continue; }
     if (!role) continue;
     if (/Air\s*Temperature/i.test(line)){
-      const v = numsOn(line.replace(/605i/gi, ''));
-      if (v.length) out[role + 'Temp'] = v[v.length - 1];
+      const v = oneNum(line, /Air\s*Temperature|605i|°?\s*F/gi);
+      if (v != null) out[role + 'Temp'] = v;
     } else if (/Relative\s*Humidity/i.test(line)){
-      const v = numsOn(line);
-      if (v.length) out[role + 'Rh'] = v[v.length - 1];
+      const v = oneNum(line, /Relative\s*Humidity|%\s*r?H/gi);
+      if (v != null) out[role + 'Rh'] = v;
+    } else if (/Dew\s*Point/i.test(line)){
+      const v = oneNum(line, /Dew\s*Point|°?\s*F/gi);
+      if (v != null) out[role + 'Dew'] = v;
     }
   }
   return Object.keys(out).length ? out : null;
@@ -162,6 +198,19 @@ function parseTesto(text){
   found.supplyTemp = plausible(conds.supplyTemp, -40, 200);
   found.returnRh   = plausible(conds.returnRh, 0, 100);
   found.supplyRh   = plausible(conds.supplyRh, 0, 100);
+
+  // Believe the dew point over the humidity when they disagree: two readings
+  // of the same air cannot both be right, and this is what turns a misread
+  // 95 %RH back into the 55 %RH that was actually on the screen.
+  for (const side of ['return', 'supply']){
+    const implied = rhFromDewPoint(found[side + 'Temp'], plausible(conds[side + 'Dew'], -60, 200));
+    if (implied == null) continue;
+    const read = found[side + 'Rh'];
+    if (read == null || Math.abs(read - implied) > RH_TOLERANCE_PCT){
+      found[side + 'Rh'] = implied;
+      found[side + 'RhWas'] = read;      // disclosed in the review panel
+    }
+  }
   return found;
 }
 
@@ -207,11 +256,16 @@ function ocrReview(i, phase, found){
     .filter(([, v]) => v);
   if (!rows.length) return false;
 
+  const fixes = ['return', 'supply']
+    .filter(side => found[side + 'RhWas'] != null)
+    .map(side => `${side} humidity read as ${found[side + 'RhWas']}%, corrected to ${found[side + 'Rh']}% from the dew point`);
+
   OCR.found[`${i}:${phase}`] = found;
   ocrSay(i, phase, `
     <div class="capocrmsg"><b>${phaseWord(phase)}</b> — read from the screenshot. <b>Check every value against the screen</b> before using it; the reader can misread a digit.</div>
     <div class="capocrrows">${rows.map(([k, v]) =>
       `<div><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div>
+    ${fixes.length ? `<div class="capocrmsg">Cross-checked against the dew point: ${esc(fixes.join('; '))}.</div>` : ''}
     <button type="button" class="capbtn small" data-use="${i}:${phase}">Use these readings</button>`);
   return true;
 }

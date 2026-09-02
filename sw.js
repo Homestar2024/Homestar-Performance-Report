@@ -16,7 +16,7 @@
  *
  * Bump VERSION on every change to this file or the shell list.
  */
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = `homestar-${VERSION}`;
 const NAV_TIMEOUT_MS = 3000;
 const ASSET_TIMEOUT_MS = 3000;

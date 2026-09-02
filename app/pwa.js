@@ -10,6 +10,23 @@
  * half-finished report to ship a CSS tweak is not a trade worth making.
  */
 
+/**
+ * Is there anything on screen a reload would lose? A generated report, an
+ * uploaded PDF, a photo, or anything typed into the capacity form. Client
+ * details alone do not count — they are two fields and quick to retype.
+ */
+function workInProgress(){
+  if (document.body.classList.contains('has-report')) return true;
+  if ((slots[1] && slots[1].ok) || (slots[2] && slots[2].ok)) return true;
+  if (photos[1] || photos[2]) return true;
+  if (CAP.photos.before.length || CAP.photos.after.length) return true;
+  if (Object.values(CAP.outdoor).some(v => String(v || '').trim())) return true;
+  return CAP.heads.some(h =>
+    headName(h) || h.model || h.serial ||
+    ['before', 'after'].some(p => Object.entries(h[p]).some(([k, v]) =>
+      k !== 'btuhSource' && k !== 'airflowSource' && String(v || '').trim())));
+}
+
 function showOffline(){
   $('offlineStrip').hidden = navigator.onLine;
 }
@@ -20,8 +37,17 @@ showOffline();
 if ('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('./sw.js').then(reg=>{
+      // Waiting for permission was too cautious. A home-screen app is rarely
+      // closed, so a waiting worker could hold a released fix back for days —
+      // which is exactly what happened with a caching change. Take over
+      // straight away when there is nothing to interrupt, and only ask when
+      // there is work on screen that a reload would throw away.
       const offer = worker => {
         if (!worker) return;
+        if (!workInProgress()){
+          worker.postMessage({type:'SKIP_WAITING'});
+          return;
+        }
         $('updateStrip').hidden = false;
         $('updateNow').onclick = ()=>{
           $('updateNow').disabled = true;

@@ -102,12 +102,21 @@ being read as a reading. That was a real bug: the ΔT screen used to offer 877,
 screen the parser does not recognise, and it still offers those — which is
 precisely why the structured parse runs first.
 
+**Humidity is cross-checked against the dew point.** Testo shows dry bulb, dew
+point and relative humidity, so the three constrain each other. A real
+screenshot read `55.0 %RH` back as `95.0`; at 68.8°F with a 52.0°F dew point the
+humidity is 55%, so the dew point settles it (Magnus formula, `rhFromDewPoint`).
+When the two disagree by more than 3 points the dew point wins, and the review
+panel says so and names both figures — the correction is never made quietly.
+
+A value only counts when its line yields exactly one number. OCR split `51.9`
+into `51 9` on a real screenshot, and guessing between the halves would have
+replaced a correct reading with nonsense; an ambiguous dew point simply
+declines to override.
+
 **Nothing is ever written automatically.** Everything found is shown in a review
-panel and applied only when *Use these readings* is tapped. This is not caution
-for its own sake. In testing against a real screenshot, Tesseract read
-`55.0 %RH` back as `95.0` — a single-digit error on a value that would have gone
-onto a customer's verification document. The fields stay editable afterwards, so
-there are two chances to catch it.
+panel and applied only when *Use these readings* is tapped. The fields stay
+editable afterwards, so there are two more chances to catch anything wrong.
 
 `tests/run.mjs` holds the verbatim OCR text of both real screenshots, misreads
 included, so the parser is guarded on every run without paying for OCR.
@@ -421,11 +430,16 @@ becoming permanent, and both matter more than they look:
    `index.html` always wins when there is any usable connection, so a broken
    release is fixed by pushing another one — not by asking a technician to
    clear site data in a crawlspace.
-2. **The worker never calls `skipWaiting()` on its own.** A new version
-   installs, then waits. The page shows "Update available — reload when you're
-   between jobs" and only takes over when it is clicked. Nobody gets reloaded
-   out of a half-finished report. A test asserts `skipWaiting` appears exactly
-   once in `sw.js` and only inside the `SKIP_WAITING` message handler.
+2. **A new version takes over when there is nothing to interrupt, and asks
+   when there is.** `workInProgress()` in `app/pwa.js` decides: a generated
+   report, an uploaded PDF, a photo, or anything typed into the capacity form
+   means the page asks first ("Update available — reload when you're between
+   jobs"); otherwise it swaps straight away. Waiting unconditionally was too
+   cautious — a home-screen app is rarely closed, so a released fix could sit
+   behind the old worker for days, which is exactly what happened with a
+   caching change. `sw.js` still never calls `skipWaiting()` by itself: the
+   page decides, and a test asserts the call appears once and only inside the
+   `SKIP_WAITING` handler.
 
 **Bump `VERSION` in `sw.js` whenever that file or the shell list changes.**
 Old caches are deleted on activate by name prefix.
