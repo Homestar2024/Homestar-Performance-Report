@@ -524,6 +524,21 @@ Closing that gap means collecting real exports:
 
 Multiple techs / login · emailing the report from the app · cross-job
 analytics off the stored history · custom domain (report.homestarhvac.ca) ·
-more than one photo pair per report · pre-filling the address when a customer
-name matches an existing record · shared history across devices, which needs a
-backend.
+more than one photo pair per report on the airflow report · pre-filling the
+address when a customer name matches an existing record · shared history across
+devices, which needs a backend.
+
+### Deliberately not built: the equipment library
+
+The original capacity spec described an optional local JSON keyed by model
+number, holding capacity-vs-outdoor-temperature points for offline
+interpolation, so a known outdoor unit would auto-fill its rated capacity.
+
+**This was considered and shelved**, after using the app on real jobs. Typing
+one rated figure per report is not the slow part, and a library only helps once
+it has been populated by hand from spec sheets — which is the actual work, and
+it never ends. Revisit it only if the same handful of models start recurring
+often enough that the lookup would clearly pay for the upkeep.
+
+Nothing depends on it: the manual box was always the primary path in the spec,
+and it stays the only one.
