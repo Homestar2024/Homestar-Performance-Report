@@ -142,9 +142,17 @@ one of them. SIMD has been universal in Chrome since 2021.
 Two write-ups, mirroring the airflow report, sitting between the rated table
 and the operating conditions:
 
-- **System Capacity** — what the before/after change means. Three variants:
-  delivered more, held its output, or dropped. The gain copy says plainly that
-  maintenance restores heat transfer rather than making the equipment bigger.
+- **System Capacity** — what the before/after change means, as an outcome
+  rather than a restatement. Three variants: more output, held its performance,
+  or dropped. It leads with the percentage and then says what that buys — less
+  run time, less energy for the same comfort, less wear. It does **not** repeat
+  the before/after BTU/h figures, which are in the table directly above it;
+  a test asserts they do not appear.
+
+  The gain copy stops at "less energy for the same comfort" and makes no dollar
+  claim. Shorter run times for the same delivered heat is defensible from the
+  measurement; a saving figure depends on the customer's rates and usage and is
+  the one line that would not survive being questioned.
 - **Measured vs Rated** — a different question: whether the equipment is
   producing what the manufacturer says it should at the conditions on the day.
   Below rated is explained as the ordinary picture on a multi-zone system and

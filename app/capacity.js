@@ -298,31 +298,24 @@ function conditionsPanel(phase){
    neither restates the other, and neither repeats the technical caveat that
    sits under the rated table. */
 
-const heatFlow = () =>
-  CAP.mode === 'cooling' ? 'heat the system is pulling out of the house'
-  : CAP.mode === 'heating' ? 'heat the system is putting into the house'
-  : 'capacity the system is delivering';
-
 function capacityBenefits(tb, ta, sys, rated, vs){
   const blocks = [];
-  const n = CAP.heads.length;
-  const units = `${n} indoor unit${n === 1 ? '' : 's'}`;
   const atTemp = CAP.outdoor.ratedTemp ? ` at ${CAP.outdoor.ratedTemp}°F` : '';
 
   if (sys.arrow && sys.pct != null){
     let head, body;
     if (sys.cls === 'g'){
-      head = 'The system is delivering more than it was';
-      body = `Measured output rose ${capPct(sys.pct)}, from ${btu(tb)} to ${btu(ta)} BTU/h across ${units}. That figure is ${heatFlow()} hour by hour — measured at the equipment, not read off a label. More of it means the house comes up to temperature sooner and the system runs for less of the day to hold it there. Gains like this come from restoring heat transfer that had drifted out, not from making the equipment any bigger.`;
+      head = 'More output from the same system';
+      body = `Capacity is up ${capPct(sys.pct)} on this service. The system reaches temperature in less run time and holds it with less effort — less energy for the same comfort, and less wear on the equipment. You are getting more out of the system you already own.`;
     } else if (sys.cls === 'n'){
-      head = 'The system is holding its output';
+      head = 'Your system held its performance';
       const held = Math.abs(sys.pct) < 0.05
         ? 'came back exactly where it started'
         : `came back within ${capPct(sys.pct)} of where it started`;
-      body = `Measured output ${held}, ${btu(tb)} to ${btu(ta)} BTU/h. That is a real result rather than an empty one: capacity slips away quietly as coils load up and airflow drifts, and equipment that measures the same after a season of running has not been losing ground. This service confirmed the output rather than having to recover it.`;
+      body = `Capacity ${held}. That is what maintenance is for — systems lose output quietly as coils load up and airflow drifts, and yours has not. The performance you paid for is still there.`;
     } else {
-      head = 'Output is down on the last measurement';
-      body = `Measured output fell ${capPct(sys.pct)}, from ${btu(tb)} to ${btu(ta)} BTU/h. Delivered capacity is the end product of charge, airflow and heat transfer, so a drop points at one of those rather than at worn-out equipment — and it is worth finding before the season leans on the system.`;
+      head = 'Output has dropped since the last measurement';
+      body = `Capacity is down ${capPct(sys.pct)}. That usually traces to charge, airflow, or a coil needing attention — all correctable, and cheaper to address now than after a season of longer run times. Finding it is what this measurement is for.`;
     }
     blocks.push({cls: sys.cls, label: 'System Capacity', delta: `${sys.arrow} ${capPct(sys.pct)}`, head, body});
   }
@@ -336,8 +329,8 @@ function capacityBenefits(tb, ta, sys, rated, vs){
       head: isAt ? "It is performing to the manufacturer's own numbers"
                  : 'Reading the comparison against rated',
       body: isAt
-        ? `The indoor units together measured ${btu(ta)} BTU/h against a rated ${btu(rated)} BTU/h${atTemp}. Meeting the published figure in the field is the part that cannot be assumed — it says the charge is right, the air is moving as it should, and the equipment is producing what it was specified to produce. You are getting the capacity you bought.`
-        : `The indoor units together measured ${btu(ta)} BTU/h against a rated ${btu(rated)} BTU/h${atTemp}. A rating describes every head running flat out at the same moment, which is not how a house actually calls for heating or cooling, so a measured total underneath it is the ordinary picture on a multi-zone system. The figure that judges this visit is the before-and-after change above.`,
+        ? `The indoor units together measured ${btu(ta)} BTU/h against a rated ${btu(rated)} BTU/h${atTemp}. The charge is right, the air is moving as it should, and the equipment is producing what it was specified to produce — you are getting the capacity you bought.`
+        : `The indoor units together measured ${btu(ta)} BTU/h against a rated ${btu(rated)} BTU/h${atTemp}. A rating assumes every head running flat out at once, which is not how a home calls for heating or cooling — measuring under it is normal on a multi-zone system. The change above is what judges this visit.`,
     });
   }
 

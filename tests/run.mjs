@@ -1596,11 +1596,12 @@ test('a capacity gain is explained in terms the customer can use', async ({ brow
   const page = await capPage(browser, origin);
   await page.click('#gen');
   const [cap, rated] = await benBlocks(page);
-  ok(/\bg\b/.test(cap.cls) && /delivering more than it was/.test(cap.head), 'the gain is named');
-  ok(/21,400 to 24,600 BTU\/h/.test(cap.body), 'with the real figures');
-  ok(/not from making the equipment any bigger/.test(cap.body),
-    'and says honestly where the gain came from');
+  ok(/\bg\b/.test(cap.cls) && /More output from the same system/.test(cap.head), 'the gain is named');
+  ok(/Capacity is up 15%/.test(cap.body), 'led by the change, not by restating the table above');
+  ok(/less energy for the same comfort/.test(cap.body), 'and translated into an outcome');
+  ok(!/21,400|24,600/.test(cap.body), 'the before/after figures are not repeated from the table');
   ok(/manufacturer/.test(rated.head), 'the rated block is about the manufacturer figure');
+  ok(!/cannot be assumed/.test(rated.body), 'the removed line stays removed');
   await page.close();
 });
 
@@ -1613,11 +1614,10 @@ test('an unchanged system is framed honestly, without inventing a gain', async (
   });
   await page.click('#gen');
   const [cap] = await benBlocks(page);
-  ok(/\bn\b/.test(cap.cls) && /holding its output/.test(cap.head), 'steady, not improved');
+  ok(/\bn\b/.test(cap.cls) && /held its performance/.test(cap.head), 'steady, not improved');
   ok(/came back exactly where it started/.test(cap.body), 'reads properly at exactly zero');
-  ok(/confirmed the output rather than having to recover it/.test(cap.body),
-    'the value is the verification');
-  ok(!/rose|improved|more than it was/.test(cap.body), 'no gain is claimed');
+  ok(/The performance you paid for is still there/.test(cap.body), 'the value is the verification');
+  ok(!/rose|improved|more output|up \d/.test(cap.body), 'no gain is claimed');
   await page.close();
 });
 
@@ -1630,8 +1630,9 @@ test('a capacity loss gets a write-up that points somewhere useful', async ({ br
   });
   await page.click('#gen');
   const [cap] = await benBlocks(page);
-  ok(/\bb\b/.test(cap.cls) && /down on the last measurement/.test(cap.head), 'the drop is stated');
-  ok(/charge, airflow and heat transfer/.test(cap.body), 'and points at what to check');
+  ok(/\bb\b/.test(cap.cls) && /dropped since the last measurement/.test(cap.head), 'the drop is stated');
+  ok(/charge, airflow, or a coil needing attention/.test(cap.body), 'and points at what to check');
+  ok(/Finding it is what this measurement is for/.test(cap.body), 'framed as the value of measuring');
   await page.close();
 });
 
@@ -1662,7 +1663,7 @@ test('without a rated figure there is nothing to compare, and no block', async (
   await page.click('#gen');
   const blocks = await benBlocks(page);
   eq(blocks.length, 1, 'only the capacity block');
-  ok(/delivering more than it was/.test(blocks[0].head), 'and it is the right one');
+  ok(/More output from the same system/.test(blocks[0].head), 'and it is the right one');
   await page.close();
 });
 
