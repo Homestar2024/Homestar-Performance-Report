@@ -31,7 +31,7 @@ const capJob = heads => ({
     before: {btuh: String(5000 + i * 400), returnTemp: '68', supplyTemp: '104', airflow: '400'},
     after:  {btuh: String(5800 + i * 400), returnTemp: '68', supplyTemp: '110', airflow: '400'},
   })),
-  outdoor: {model: 'MXZ-5C42NAHZ', serial: 'OD-1', rated: '36000', tempBefore: '33', tempAfter: '35'},
+  outdoor: {model: 'MXZ-5C42NAHZ', serial: 'OD-1', rated: '36000', ratedTemp: '35'},
 });
 
 const LETTER = {

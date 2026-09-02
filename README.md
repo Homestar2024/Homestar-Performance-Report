@@ -57,7 +57,8 @@ Client name, address and technician are shared by all three.
 
 Up to five indoor units, entered one at a time in an accordion so a five-head
 system does not become an endless scroll. Each head takes an area, unit type,
-model, serial and a before/after BTU/h reading; supporting readings (return and
+model, serial and a before/after BTU/h reading — the report prints the area as
+a heading with unit type, model and serial on their own lines beneath it; supporting readings (return and
 supply temp/RH, airflow, Hz/V) sit behind a disclosure and feed the operating
 conditions section.
 
@@ -67,6 +68,9 @@ report prints that number and labels it for what it is. A dry-bulb-only
 fallback would be sensible-only and must always be labelled as such — never
 folded into a total.
 
+Probe serial numbers are used internally to map readings but **never appear on
+the report** — a customer has no use for them.
+
 **Mode is detected from supply against return dry-bulb**, which holds whatever
 the conditions. With only a supply reading it falls back to a 65°F threshold.
 Either way the technician can override it, and once they do, detection stops
@@ -75,21 +79,38 @@ arguing.
 Photographs: multiple before down the left column, multiple after down the
 right, since a job can have several indoor units plus the outdoor unit.
 
-### Reading a BTU/h figure off a screenshot
+### Reading a Testo screenshot
 
 Each BTU/h field has a **Read from screenshot** button. Tesseract runs entirely
 in the page — no server, no API key, nothing leaves the device. The screenshot
-is read and discarded: it is never stored and never appears on the report,
-which shows data only.
+is read and discarded: never stored, never on the report, which shows data only.
 
-**Nothing is ever filled in automatically.** The engine returns candidate
-numbers and the technician taps the right one. That is not caution for its own
-sake: a capacity figure misread by one digit would go onto a customer's
-verification document. Candidates are filtered to a plausible range (300 to
-300,000 BTU/h) and ones sitting next to the word "BTU" are offered first —
-though in testing Tesseract read "BTU/h" as "&run", so that ordering is a hint,
-not a guarantee. It is worth re-tuning `btuCandidates()` against real Testo
-screenshots once there are some.
+Two Testo screens are parsed, both by structure rather than by hunting for
+loose numbers:
+
+- **Cooling and Heating Output** — the useful one. It carries the capacity
+  *and* both probes, so one screenshot fills a whole phase. The two probe cards
+  sit side by side and OCR reads across them, so the caption line holds both
+  labels and the line beneath holds both numbers, left column first.
+- **Differential Temperature (ΔT)** — one card per probe, titled by serial. The
+  `PROBES` table maps 651 to return and 877 to supply; that is what the table
+  is for. This screen has no capacity and the parser correctly reports none.
+
+Capacity is anchored on the literal `BTU/h`, which is what stops a probe serial
+being read as a reading. That was a real bug: the ΔT screen used to offer 877,
+651 and 198 as capacities. A loose number-scanning fallback still exists for a
+screen the parser does not recognise, and it still offers those — which is
+precisely why the structured parse runs first.
+
+**Nothing is ever written automatically.** Everything found is shown in a review
+panel and applied only when *Use these readings* is tapped. This is not caution
+for its own sake. In testing against a real screenshot, Tesseract read
+`55.0 %RH` back as `95.0` — a single-digit error on a value that would have gone
+onto a customer's verification document. The fields stay editable afterwards, so
+there are two chances to catch it.
+
+`tests/run.mjs` holds the verbatim OCR text of both real screenshots, misreads
+included, so the parser is guarded on every run without paying for OCR.
 
 The engine is ~6.8MB and is **deliberately not in the service worker's precache
 list** — making every first install pay for an optional feature would be the
@@ -108,8 +129,11 @@ one of them. SIMD has been universal in Chrome since 2021.
   maintenance often moves capacity very little and dressing that up would make
   every report worthless.
 - A real capacity loss is flagged, not buried.
-- Both outdoor temperatures are printed, and if they differ the report says so
-  and that some of the difference is weather rather than work.
+- The report prints the outdoor temperature the rated figure is quoted at, and
+  says plainly that capacity moves with outdoor conditions and readings taken
+  at different temperatures are not comparable. There is one outdoor
+  temperature, not a before and after pair: what the summed indoor total is
+  judged against is the outdoor unit's rating *at a stated temperature*.
 - Measured above rated is normal and shown as positive; below rated is neutral,
   not a failure.
 - The rated comparison carries its caveats: nominal indoor conditions, and

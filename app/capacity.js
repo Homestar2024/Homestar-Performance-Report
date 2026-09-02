@@ -48,7 +48,7 @@ const CAP = {
   mode: null,            // heating | cooling — null until detected or chosen
   modeManual: false,     // true once overridden; detection stops fighting it
   heads: [blankHead()],
-  outdoor: {model: '', serial: '', rated: '', tempBefore: '', tempAfter: ''},
+  outdoor: {model: '', serial: '', rated: '', ratedTemp: ''},
   photos: {before: [], after: []},
   open: 0,               // index of the expanded head
 };
@@ -253,12 +253,11 @@ function headRow(h, i){
   const b = capNum(h.before.btuh), a = capNum(h.after.btuh);
   const st = capStatus(b, a);
   const max = Math.max(b || 0, a || 0) || 1;
-  const ident = [h.unitType, h.model && `Model ${h.model}`, h.serial && `S/N ${h.serial}`]
-    .filter(Boolean).map(esc).join(' · ');
+  const ident = [h.unitType, h.model, h.serial && `S/N ${h.serial}`].filter(Boolean);
   return `<div class="capcard">
     <div class="capcardh">
       <div class="capcardn">${esc(headName(h) || `Indoor Unit ${i + 1}`)}</div>
-      ${ident ? `<div class="capcardi">${ident}</div>` : ''}
+      ${ident.map(t => `<div class="capcardi">${esc(t)}</div>`).join('')}
     </div>
     <div class="capbars">
       <div class="capbl">Before</div>
@@ -273,7 +272,6 @@ function headRow(h, i){
 }
 
 function conditionsPanel(phase){
-  const outdoor = CAP.outdoor[phase === 'before' ? 'tempBefore' : 'tempAfter'];
   const rows = CAP.heads.map((h, i) => {
     const p = h[phase];
     const rt = capNum(p.returnTemp), stp = capNum(p.supplyTemp);
@@ -289,7 +287,7 @@ function conditionsPanel(phase){
     return `<div class="caprow"><span class="caprk">${esc(headName(h) || `Unit ${i + 1}`)}</span><span class="caprv">${bits || '—'}</span></div>`;
   }).join('');
   return `<div class="cappanel ${phase}">
-    <div class="cappt">${phase === 'before' ? 'Before' : 'After'}${outdoor ? ` — outdoor ${esc(outdoor)}°F` : ''}</div>
+    <div class="cappt">${phase === 'before' ? 'Before' : 'After'}</div>
     <div class="capdl">${rows}</div>
   </div>`;
 }
@@ -315,8 +313,7 @@ function capacitySections(breakFirst){
   const sys = capStatus(tb, ta);
   const rated = capNum(CAP.outdoor.rated);
   const vs = ratedStatus(ta, rated);
-  const tempsDiffer = capNum(CAP.outdoor.tempBefore) != null && capNum(CAP.outdoor.tempAfter) != null
-    && capNum(CAP.outdoor.tempBefore) !== capNum(CAP.outdoor.tempAfter);
+  const atTemp = CAP.outdoor.ratedTemp ? `${CAP.outdoor.ratedTemp}°F` : '';
 
   const hero = `
     <div class="capcell ${sys.cls}">
@@ -339,7 +336,7 @@ function capacitySections(breakFirst){
   <section class="${breakFirst ? 'capbreak' : ''}">
     <div class="sh">Verified Results at a Glance</div>
     <div class="caphero">${hero}</div>
-    ${tempsDiffer ? `<div class="capnote">Outdoor temperature differed between the two tests (${esc(CAP.outdoor.tempBefore)}°F before, ${esc(CAP.outdoor.tempAfter)}°F after). Capacity moves with outdoor conditions, so some of any difference is weather rather than work.</div>` : ''}
+    <div class="capnote">Capacity moves with outdoor conditions${atTemp ? `; the rated figure below is quoted at ${esc(atTemp)}` : ''}. Readings taken at different outdoor temperatures are not directly comparable.</div>
   </section>
 
   <section>
@@ -351,7 +348,7 @@ function capacitySections(breakFirst){
     <div class="sh">System Total vs Outdoor Rated</div>
     <div class="capvs">
       <div class="capvsr"><span>Measured indoor total, after</span><b>${btu(ta)} BTU/h</b></div>
-      <div class="capvsr"><span>Outdoor unit rated${CAP.outdoor.tempAfter ? ` at ${esc(CAP.outdoor.tempAfter)}°F, ${esc(CAP.mode || '')}` : ''}</span><b>${btu(rated)} BTU/h</b></div>
+      <div class="capvsr"><span>Outdoor unit rated${atTemp ? ` at ${esc(atTemp)}` : ''}${CAP.mode ? `, ${esc(CAP.mode)}` : ''}</span><b>${btu(rated)} BTU/h</b></div>
       <div class="capvsr total"><span>Difference</span><b class="${vs.cls}">${vs.arrow} ${vs.pct == null ? '—' : capPct(vs.pct)}</b></div>
     </div>
     ${outdoorIdent ? `<div class="capnote">Outdoor unit: ${outdoorIdent}</div>` : ''}
@@ -370,14 +367,13 @@ const CAPACITY_FOOTNOTE = 'Total delivered capacity (sensible + latent), measure
 
 function capacityShell(){
   const modeLabel = CAP.mode ? CAP.mode[0].toUpperCase() + CAP.mode.slice(1) : '';
-  const temps = [CAP.outdoor.tempBefore, CAP.outdoor.tempAfter].filter(Boolean);
   return reportShell({
     title: 'System Capacity Report',
     verify: 'Delivered heating and cooling capacity was measured with Testo Smart Probes at the return and supply of each indoor unit, before and after the maintenance performed by Homestar HVAC Solutions.',
     meta: [
       {l: 'Date', v: new Date().toISOString().slice(0, 10)},
       {l: 'Mode', v: modeLabel},
-      {l: `Outdoor ${PROBES.outdoorAir.serial}`, v: temps.length === 2 ? `${temps[0]}°F → ${temps[1]}°F` : (temps[0] ? temps[0] + '°F' : '')},
+      {l: 'Outdoor temperature', v: CAP.outdoor.ratedTemp ? `${CAP.outdoor.ratedTemp}°F` : ''},
       {l: 'Technician', v: $('cTech').value.trim() || 'Calvin Windsor'},
     ],
     footNote: CAPACITY_FOOTNOTE,
@@ -389,7 +385,6 @@ function capacityShell(){
 const RT = ['airflow', 'capacity', 'combination'];
 
 function combinedShell(before, after){
-  const temps = [CAP.outdoor.tempBefore, CAP.outdoor.tempAfter].filter(Boolean);
   return reportShell({
     title: 'Performance & Capacity Report',
     verify: 'Airflow and static pressure were measured with the TrueFlow® analysis, and delivered capacity with Testo Smart Probes, before and after the work performed by Homestar HVAC Solutions.',
@@ -397,7 +392,7 @@ function combinedShell(before, after){
       {l: 'Before tested', v: before.date || ''},
       {l: 'After tested',  v: after.date  || ''},
       {l: 'Mode',          v: CAP.mode ? CAP.mode[0].toUpperCase() + CAP.mode.slice(1) : ''},
-      {l: `Outdoor ${PROBES.outdoorAir.serial}`, v: temps.length === 2 ? `${temps[0]}°F → ${temps[1]}°F` : (temps[0] ? temps[0] + '°F' : '')},
+      {l: 'Outdoor temperature', v: CAP.outdoor.ratedTemp ? `${CAP.outdoor.ratedTemp}°F` : ''},
       {l: 'Technician',    v: $('cTech').value.trim() || after.tech || before.tech || 'Calvin Windsor'},
     ],
     footNote: AIRFLOW_FOOTNOTE + ' ' + CAPACITY_FOOTNOTE,
@@ -515,6 +510,12 @@ function capInit(){
       ocrAccept(+i, phase, +value);
       return;
     }
+    const u = e.target.closest('[data-use]');
+    if (u){
+      const [i, phase] = u.dataset.use.split(':');
+      ocrApply(+i, phase);
+      return;
+    }
     const t = e.target.closest('[data-toggle]'), n = e.target.closest('[data-next]');
     if (n){
       const i = +n.dataset.next;
@@ -582,7 +583,7 @@ function capRestore(snap){
       before: Object.assign(blankPhase(), h.before),
       after:  Object.assign(blankPhase(), h.after),
     }));
-  CAP.outdoor = Object.assign({model:'', serial:'', rated:'', tempBefore:'', tempAfter:''}, snap.outdoor);
+  CAP.outdoor = Object.assign({model:'', serial:'', rated:'', ratedTemp:''}, snap.outdoor);
   CAP.open = -1;
   $('capCount').value = String(CAP.heads.length);
   for (const el of $('capOut').querySelectorAll('[data-out]')) el.value = CAP.outdoor[el.dataset.out] || '';
@@ -593,7 +594,7 @@ function capRestore(snap){
 function capReset(){
   CAP.mode = null; CAP.modeManual = false;
   CAP.heads = [blankHead()];
-  CAP.outdoor = {model:'', serial:'', rated:'', tempBefore:'', tempAfter:''};
+  CAP.outdoor = {model:'', serial:'', rated:'', ratedTemp:''};
   CAP.photos = {before: [], after: []};
   CAP.open = 0;
   $('capCount').value = '1';

@@ -198,6 +198,13 @@
   .capchip.lab{border-color:var(--blue); color:var(--blue)}
   .capchip span{font-size:10.5px; font-weight:800; letter-spacing:.06em; opacity:.75}
   .capchip:hover{background:#F5F9FD; border-color:var(--blue)}
+  .capocrrows{border:1px solid var(--line); border-radius:9px; padding:2px 12px; margin-top:8px}
+  .capocrrows div{display:flex; justify-content:space-between; gap:12px; padding:7px 0;
+                  border-bottom:1px solid var(--line2); font-size:13px}
+  .capocrrows div:last-child{border-bottom:0}
+  .capocrrows span{color:var(--slate)}
+  .capocrrows b{font-weight:700; font-variant-numeric:tabular-nums}
+  .capbtn.small{min-height:44px; font-size:14px; margin-top:9px}
 
   .capbtn{width:100%; min-height:50px; border:0; border-radius:11px; background:var(--blue); color:#fff;
           font-size:15.5px; font-weight:700; font-family:inherit; cursor:pointer; margin-top:4px}
@@ -610,11 +617,11 @@
     <div id="capOut">
       <div class="capfld"><label>Model</label><input data-out="model" placeholder="Paste or type"></div>
       <div class="capfld"><label>Serial</label><input data-out="serial" placeholder="Paste or type"></div>
-      <div class="capfld"><label>Rated capacity at the logged outdoor temp &amp; mode</label>
-        <input data-out="rated" inputmode="numeric" placeholder="BTU/h"></div>
       <div class="captwo">
-        <div class="capfld"><label>Outdoor °F before</label><input data-out="tempBefore" inputmode="decimal" placeholder="—"></div>
-        <div class="capfld"><label>Outdoor °F after</label><input data-out="tempAfter" inputmode="decimal" placeholder="—"></div>
+        <div class="capfld"><label>Rated capacity</label>
+          <input data-out="rated" inputmode="numeric" placeholder="BTU/h"></div>
+        <div class="capfld"><label>Rated at outdoor °F</label>
+          <input data-out="ratedTemp" inputmode="decimal" placeholder="—"></div>
       </div>
     </div>
 

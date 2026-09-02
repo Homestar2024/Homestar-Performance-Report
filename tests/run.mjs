@@ -1263,7 +1263,7 @@ const CAP_JOB = {
      before:{btuh:'7100', returnTemp:'66.2', supplyTemp:'96.8', airflow:'420', airflowSource:'measured'},
      after: {btuh:'8600', returnTemp:'66.5', supplyTemp:'104.1', airflow:'455', airflowSource:'measured'}},
   ],
-  outdoor: {model:'MXZ-3C30NAHZ', serial:'OD-55231', rated:'22000', tempBefore:'34', tempAfter:'35'},
+  outdoor: {model:'MXZ-3C30NAHZ', serial:'OD-55231', rated:'22000', ratedTemp: '35'},
 };
 
 const capPage = async (browser, origin, job = CAP_JOB) => {
@@ -1441,13 +1441,35 @@ test('a real capacity loss is flagged rather than dressed up', async ({ browser,
   await page.close();
 });
 
-test('a difference in outdoor temperature is disclosed, not buried', async ({ browser, origin }) => {
+test('the report states the outdoor temperature the rating is quoted at', async ({ browser, origin }) => {
   const page = await capPage(browser, origin);
   await page.click('#gen');
   const txt = await page.$eval('#sheet', e => e.textContent);
-  ok(/Outdoor temperature differed/.test(txt), 'the caveat appears');
-  ok(/34°F before, 35°F after/.test(txt), 'with both figures');
-  ok(/weather rather than work/.test(txt), 'and says what it means');
+  ok(/Outdoor temperature/.test(txt) && /35°F/.test(txt), 'the outdoor temperature is on the report');
+  ok(/rated at 35°F/.test(txt), 'and the rated figure is tied to it');
+  ok(/Capacity moves with outdoor conditions/.test(txt), 'with the conditions caveat');
+  await page.close();
+});
+
+test('no probe serial numbers reach the report', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const txt = await page.$eval('#sheet', e => e.textContent);
+  for (const serial of ['651', '877', '198', '217']) {
+    ok(!new RegExp(`\\b${serial}\\b`).test(txt), `probe serial ${serial} should not be on a customer's report`);
+  }
+  await page.close();
+});
+
+test('each indoor unit lists its type, model and serial on their own lines', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const card = await page.$eval('.capcard', e => ({
+    name: e.querySelector('.capcardn').textContent.trim(),
+    lines: [...e.querySelectorAll('.capcardi')].map(x => x.textContent.trim()),
+  }));
+  eq(card.name, 'Living Room', 'area is the heading');
+  eq(card.lines, ['Wall mount', 'MSZ-FS15NA', 'S/N A1122'], 'three lines beneath it');
   await page.close();
 });
 
@@ -1529,7 +1551,7 @@ test('the capacity report prints without cutting a unit across a page', async ({
       before: {btuh: String(5000 + n * 400), returnTemp:'68', supplyTemp:'104', airflow:'400'},
       after:  {btuh: String(5800 + n * 400), returnTemp:'68', supplyTemp:'110', airflow:'400'},
     })),
-    outdoor: {model:'MXZ-5C42NAHZ', rated:'36000', tempBefore:'33', tempAfter:'35'},
+    outdoor: {model:'MXZ-5C42NAHZ', rated:'36000', ratedTemp: '35'},
   });
   await addCapacityPhotos(page, 'before', 2);
   await addCapacityPhotos(page, 'after', 2);
@@ -1644,6 +1666,113 @@ test('the screenshot itself is never kept or printed', async ({ browser, origin 
   await page.close();
 });
 
+/* Text captured by running the real Testo screenshots through the real engine.
+   Keeping it verbatim — misreads and all — means the parser is guarded without
+   paying for OCR on every run. Note "95.0 %RH" on the output screen: the real
+   value was 55.0. That misread is why extracted values are reviewed, not
+   silently applied. */
+const TESTO_OUTPUT_TEXT = `10:36 @ 8 Yl 83%m
+= Cooling and Heating Output $08
+Live Table
+0]00:00:00
+Current Value 33,540 BTU/h
+
+BTUH
+testo 605i + 651 : testo 605i 877 :
+Return Air Supply Air
+Air Temperature Air Temperature
+68.8 °F 50.3 °F
+Relative Humidity Relative Humidity
+95.0 %RH 81.0 %RH
+Dew Point Dew Point
+52.0 °F 44.7 °F
+Wet Bulb Temperature Wet Bulb Temperature
+58.6 °F 47.3 °F
+Absolute Humidity Absolute Humidity
+9.77 g/m? 7.70 g/m?
+| @ <`;
+
+const TESTO_DT_TEXT = `10:36 © 8 Fal 83%m
+= Differential Temperature (AT) $08
+Live Graphic Table
+
+0100:00:00 :
+Current Value 1 8.5 °F
+AT
+testo 605i - 877 :
+Air Temperature 50.3 °F
+Relative Humidity 81.0 %rH
+Dew Point 44.7 °F
+Wet Bulb Temperature 47.3 °F
+Absolute Humidity 7.70 g/m?
+testo 605i © 651 :
+Air Temperature 68.8 °F
+Relative Humidity 54.9 %RrH
+Dew Point 51 9 °F
+Wet Bulb Temperature 58.6 °F
+Absolute Humidity 9.75 gm?
+
+1 O <`;
+
+const parse = (page, text) => page.evaluate(t => parseTesto(t), text);
+
+test('a real Cooling and Heating Output screen parses in full', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  eq(await parse(page, TESTO_OUTPUT_TEXT),
+    {btuh: 33540, returnTemp: 68.8, returnRh: 95, supplyTemp: 50.3, supplyRh: 81},
+    'capacity and both probes, columns read left to right');
+  await page.close();
+});
+
+test('a real Differential Temperature screen maps probes by serial', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  eq(await parse(page, TESTO_DT_TEXT),
+    {btuh: null, returnTemp: 68.8, returnRh: 54.9, supplyTemp: 50.3, supplyRh: 81},
+    '651 is the return probe, 877 the supply; that screen carries no capacity');
+  await page.close();
+});
+
+test('probe serials are never mistaken for a capacity', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  // This was the reported bug: the ΔT screen offered 877, 651 and 198 as readings.
+  eq((await parse(page, TESTO_DT_TEXT)).btuh, null, 'no capacity invented from a screen that has none');
+  const chips = await page.evaluate(t => btuCandidates(t).map(c => c.value), TESTO_DT_TEXT);
+  ok(chips.includes(651) || chips.includes(877), 'the loose fallback still would have offered them');
+  await page.close();
+});
+
+test('a parsed screen fills the readings only after they are used', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await page.evaluate(t => ocrReview(0, 'before', parseTesto(t)), TESTO_OUTPUT_TEXT);
+  ok(/Check every value against the screen/.test(await page.$eval('#capO-0-before', e => e.textContent)),
+    'the review panel asks for the values to be checked');
+  eq(await page.evaluate(() => CAP.heads[0].before.btuh), '', 'nothing written yet');
+
+  await page.click('[data-use="0:before"]');
+  eq(await page.evaluate(() => {
+    const b = CAP.heads[0].before;
+    return [b.btuh, b.returnTemp, b.returnRh, b.supplyTemp, b.supplyRh, b.btuhSource];
+  }), ['33540', '68.8', '95', '50.3', '81', 'ocr'], 'capacity and conditions all land');
+  eq(await page.evaluate(() => CAP.mode), 'cooling', 'and the mode follows from supply being colder');
+  await page.close();
+});
+
+test('parsed conditions reach the operating conditions section', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await page.evaluate(t => { ocrReview(0, 'before', parseTesto(t)); }, TESTO_OUTPUT_TEXT);
+  await page.click('[data-use="0:before"]');
+  await page.evaluate(t => { ocrReview(0, 'after', parseTesto(t)); }, TESTO_DT_TEXT);
+  await page.click('[data-use="0:after"]');
+  await page.evaluate(() => { CAP.heads[0].location = 'Living Room'; CAP.heads[0].after.btuh = '35000'; renderHeads(); setStatus(); });
+  await page.click('#gen');
+  const conds = await page.$eval('#sheet .captwo', e => e.textContent.replace(/\s+/g, ' '));
+  ok(/RA 68.8°F \/ 95%/.test(conds), `before conditions printed, got "${conds}"`);
+  ok(/SA 50.3°F \/ 81%/.test(conds), 'supply conditions printed');
+  await page.close();
+});
+
 test('candidate readings are filtered to plausible capacities', async ({ browser, origin }) => {
   const page = await openApp(browser, origin, { reportType: 'capacity' });
   const picked = await page.evaluate(() => btuCandidates(
@@ -1663,7 +1792,7 @@ test('an unreadable engine says so and leaves the field typeable', async ({ brow
   await page.selectOption('#capCount', '1');
   await ocrRead(page, 0, 'before', '9,950');
   const msg = await page.$eval('#capO-0-before', e => e.textContent);
-  ok(/type the value in/i.test(msg), `expected a fallback message, got "${msg}"`);
+  ok(/type the values in/i.test(msg), `expected a fallback message, got "${msg}"`);
   await page.fill('#capB-0-before', '9950');
   eq(await page.evaluate(() => CAP.heads[0].before.btuh), '9950', 'typing still works');
   await page.close();
