@@ -1208,7 +1208,14 @@ test('the worker never takes over on its own', async () => {
 
 /* A released fix used to need two loads to appear: the app's own JS was served
    cache-first, so the first load after a deploy ran the previous version. That
-   is how a shipped OCR change looked broken in the field. */
+   is how a shipped OCR change looked broken in the field.
+
+   It happened a second time for a different reason. Serving app code
+   network-first fixed nothing while the worker's "network" fetch was still
+   answered by the browser's own HTTP cache — GitHub Pages sends
+   `max-age=600`, so for ten minutes after a deploy the phone re-ran the file
+   it already had. The test server sends the same header, so this test now
+   fails unless the worker revalidates past the HTTP cache. */
 test('a deployed change to the app takes effect on the next load, not the one after', async ({ browser }) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'homestar-fresh-'));
   for (const f of ['index.html', 'sw.js', 'manifest.webmanifest']) fs.copyFileSync(path.join(ROOT, f), path.join(dir, f));

@@ -462,10 +462,19 @@ rather than appearing to work and doing nothing.
 `sw.js` caches the shell on first visit. Two rules keep a bad release from
 becoming permanent, and both matter more than they look:
 
-1. **Navigations are network-first** (3s timeout, then cache). A fresh
-   `index.html` always wins when there is any usable connection, so a broken
-   release is fixed by pushing another one — not by asking a technician to
-   clear site data in a crawlspace.
+1. **Navigations and the app's own JS are network-first** (3s timeout, then
+   cache). A fresh `index.html` always wins when there is any usable
+   connection, so a broken release is fixed by pushing another one — not by
+   asking a technician to clear site data in a crawlspace.
+
+   Network-first is only worth the name if the fetch actually leaves the
+   phone, so both paths use `cache: 'reload'`. GitHub Pages sends
+   `Cache-Control: max-age=600`; a plain `fetch()` is answered from the
+   browser's own HTTP cache for those ten minutes, which meant a deployed
+   copy change still read as the old version on a phone that had opened the
+   app shortly before. The bug survived a test suite that asserted
+   network-first because the test server sent `no-cache` — it now sends
+   `max-age=600` like Pages does, so the assertion is worth something.
 2. **A new version takes over when there is nothing to interrupt, and asks
    when there is.** `workInProgress()` in `app/pwa.js` decides: a generated
    report, an uploaded PDF, a photo, or anything typed into the capacity form

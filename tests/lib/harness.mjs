@@ -21,8 +21,13 @@ const TYPES = {
  * service workers register exactly as they do on the deployed site.
  * pdf.js is served from ./vendor like it is in production — there is no CDN
  * left to stub.
+ *
+ * Responses carry the same `max-age=600` GitHub Pages sends. Serving
+ * `no-cache` here made the tests kinder than production: the browser's HTTP
+ * cache never went stale, so a service worker that revalidated through it
+ * looked like it was reaching the network when it was not.
  */
-export async function serve(root = ROOT) {
+export async function serve(root = ROOT, { cacheControl = 'max-age=600' } = {}) {
   const base = path.resolve(root);
   const server = http.createServer((req, res) => {
     const rel = decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html';
@@ -34,7 +39,7 @@ export async function serve(root = ROOT) {
     }
     res.writeHead(200, {
       'content-type': TYPES[path.extname(file)] || 'application/octet-stream',
-      'cache-control': 'no-cache',
+      'cache-control': cacheControl,
     });
     fs.createReadStream(file).pipe(res);
   });

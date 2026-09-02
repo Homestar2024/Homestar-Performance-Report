@@ -16,7 +16,7 @@
  *
  * Bump VERSION on every change to this file or the shell list.
  */
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = `homestar-${VERSION}`;
 const NAV_TIMEOUT_MS = 3000;
 const ASSET_TIMEOUT_MS = 3000;
@@ -70,12 +70,25 @@ self.addEventListener('message', event => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
-/** Network, but not for longer than a technician will wait on one bar. */
-function networkWithTimeout(request, ms) {
+/**
+ * Go to the network, but not for longer than a technician will wait on one bar.
+ *
+ * `cache: 'reload'` is the point of this function. Serving app code
+ * network-first is worthless if "the network" is the browser's own HTTP cache:
+ * GitHub Pages sends `Cache-Control: max-age=600`, so for ten minutes after a
+ * deploy a plain fetch() is answered from that cache with the PREVIOUS file,
+ * without a single byte leaving the phone. That is how a merged copy change
+ * still read as the old version in the field. Reload skips the HTTP cache and
+ * asks the server, which is what network-first was supposed to mean.
+ */
+function revalidate(request, ms) {
+  let req = request;
+  try { req = new Request(request, { cache: 'reload' }); }
+  catch (e) { /* older engines: a stale-but-working response beats none */ }
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), ms);
-    fetch(request).then(r => { clearTimeout(timer); resolve(r); },
-                        e => { clearTimeout(timer); reject(e); });
+    fetch(req).then(r => { clearTimeout(timer); resolve(r); },
+                    e => { clearTimeout(timer); reject(e); });
   });
 }
 
@@ -89,7 +102,7 @@ self.addEventListener('fetch', event => {
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        const fresh = await networkWithTimeout(req, NAV_TIMEOUT_MS);
+        const fresh = await revalidate(req, NAV_TIMEOUT_MS);
         const cache = await caches.open(CACHE);
         cache.put('./index.html', fresh.clone());
         return fresh;
@@ -109,7 +122,7 @@ self.addEventListener('fetch', event => {
   if (APP_CODE.test(url.pathname)) {
     event.respondWith((async () => {
       try {
-        const fresh = await networkWithTimeout(req, ASSET_TIMEOUT_MS);
+        const fresh = await revalidate(req, ASSET_TIMEOUT_MS);
         if (fresh && fresh.ok) (await caches.open(CACHE)).put(req, fresh.clone());
         return fresh;
       } catch (e) {
