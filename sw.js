@@ -16,10 +16,14 @@
  *
  * Bump VERSION on every change to this file or the shell list.
  */
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `homestar-${VERSION}`;
 const NAV_TIMEOUT_MS = 3000;
 
+/* The Tesseract engine under vendor/tesseract/ is deliberately NOT precached:
+   it is ~8.7MB and OCR is optional, so making every first install pay for it
+   would be the wrong trade. The fetch handler below caches it the first time
+   it is used, after which screenshot reading works offline too. */
 const SHELL = [
   './',
   './index.html',
@@ -29,6 +33,7 @@ const SHELL = [
   './app/intake.js',
   './app/report.js',
   './app/capacity.js',
+  './app/ocr.js',
   './app/history.js',
   './app/pwa.js',
   './vendor/pdf.min.js',

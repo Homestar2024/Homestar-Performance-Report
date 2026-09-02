@@ -9,7 +9,9 @@
     "capture": "node capture-text.mjs"
   },
   "devDependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
     "pdfjs-dist": "3.11.174",
-    "playwright": "^1.56.0"
+    "playwright": "^1.56.0",
+    "tesseract.js": "^7.0.0"
   }
 }

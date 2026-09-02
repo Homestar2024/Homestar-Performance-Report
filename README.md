@@ -16,11 +16,13 @@ app/parser.js           reading TEC TrueFlow PDFs
 app/intake.js           uploader, confirm & correct panel, photographs
 app/report.js           shared shell, airflow scoring and write-ups
 app/capacity.js         chooser, capacity entry flow and report
+app/ocr.js              reading a BTU/h figure off a Testo screenshot
 app/history.js          IndexedDB storage, backup, print actions
 app/pwa.js              connection notice, service-worker updates
 sw.js                   service worker — offline shell
 manifest.webmanifest    install metadata
 vendor/                 pdf.js 3.11.174, served from this origin
+vendor/tesseract/       OCR engine + English data, ~6.8MB, lazily loaded
 icons/                  192/512/maskable launcher icons
 .nojekyll               serve the files as-is, no Jekyll processing
 tests/                  not deployed
@@ -70,8 +72,35 @@ the conditions. With only a supply reading it falls back to a 65°F threshold.
 Either way the technician can override it, and once they do, detection stops
 arguing.
 
-Photographs: multiple before and multiple after, since a job can have several
-indoor units plus the outdoor unit.
+Photographs: multiple before down the left column, multiple after down the
+right, since a job can have several indoor units plus the outdoor unit.
+
+### Reading a BTU/h figure off a screenshot
+
+Each BTU/h field has a **Read from screenshot** button. Tesseract runs entirely
+in the page — no server, no API key, nothing leaves the device. The screenshot
+is read and discarded: it is never stored and never appears on the report,
+which shows data only.
+
+**Nothing is ever filled in automatically.** The engine returns candidate
+numbers and the technician taps the right one. That is not caution for its own
+sake: a capacity figure misread by one digit would go onto a customer's
+verification document. Candidates are filtered to a plausible range (300 to
+300,000 BTU/h) and ones sitting next to the word "BTU" are offered first —
+though in testing Tesseract read "BTU/h" as "&run", so that ordering is a hint,
+not a guarantee. It is worth re-tuning `btuCandidates()` against real Testo
+screenshots once there are some.
+
+The engine is ~6.8MB and is **deliberately not in the service worker's precache
+list** — making every first install pay for an optional feature would be the
+wrong trade. It loads on first use and the worker's runtime cache keeps it, so
+OCR needs a connection once and works offline after that. If it cannot load,
+the panel says so and the field is still typeable. Typing always works.
+
+One core build (`tesseract-core-simd-lstm.wasm.js`) is pinned rather than
+pointing at the directory: given a directory, Tesseract feature-detects and
+requests whichever variant the device prefers, which would mean vendoring every
+one of them. SIMD has been universal in Chrome since 2021.
 
 ### Honesty rules in the capacity report
 

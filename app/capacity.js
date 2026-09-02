@@ -146,6 +146,7 @@ function btuhField(i, phase, ph){
     <label for="${id}">${phase === 'before' ? 'Before' : 'After'} BTU/h</label>
     <input id="${id}" data-head="${i}" data-phase="${phase}" data-key="btuh"
            inputmode="numeric" placeholder="—" value="${esc(ph.btuh)}">
+    <button class="capocr" type="button" data-ocr="${i}:${phase}">Read from screenshot</button>
   </div>`;
 }
 
@@ -208,6 +209,8 @@ function headCard(h, i){
         ${btuhField(i, 'before', h.before)}
         ${btuhField(i, 'after', h.after)}
       </div>
+      <div class="capocrout" id="capO-${i}-before"></div>
+      <div class="capocrout" id="capO-${i}-after"></div>
       <details class="capmore"${h.before.returnTemp || h.after.returnTemp ? ' open' : ''}>
         <summary>Supporting readings — temps, RH, airflow, electrical</summary>
         ${phaseReadings(i, 'before', h.before)}
@@ -501,6 +504,17 @@ function capInit(){
     else { refreshMode(); capStatusLine(); setStatus(); }
   });
   $('capHeads').addEventListener('click', e => {
+    const o = e.target.closest('[data-ocr]'), p = e.target.closest('[data-pick]');
+    if (o){
+      const [i, phase] = o.dataset.ocr.split(':');
+      startOcr(+i, phase);
+      return;
+    }
+    if (p){
+      const [i, phase, value] = p.dataset.pick.split(':');
+      ocrAccept(+i, phase, +value);
+      return;
+    }
     const t = e.target.closest('[data-toggle]'), n = e.target.closest('[data-next]');
     if (n){
       const i = +n.dataset.next;

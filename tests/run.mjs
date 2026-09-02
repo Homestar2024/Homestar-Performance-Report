@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, pickReport, setCapacity, addCapacityPhotos, pageTexts, ROOT } from './lib/harness.mjs';
+import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, pickReport, setCapacity, addCapacityPhotos, pageTexts, ocrRead, ROOT } from './lib/harness.mjs';
 import { trueFlowPdf, unrelatedPdf, BEFORE, AFTER } from './lib/make-pdf.mjs';
 
 const LETTER = { format: 'Letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } };
@@ -1599,6 +1599,83 @@ test('the saved list describes a capacity job in its own terms', async ({ browse
   const meta = await page.$eval('.hmeta', e => e.textContent);
   ok(/3 units/.test(meta) && /heating/.test(meta), `expected units and mode, got "${meta}"`);
   ok(/capacity/.test(meta), 'and the capacity change');
+  await page.close();
+});
+
+/* ---------------------------------------------- reading Testo screenshots */
+
+/* The engine runs in the page — no server, no key, nothing leaves the device.
+   Nothing is ever filled in automatically: a capacity figure misread by a
+   digit would go onto a customer's verification document, so a human picks. */
+
+test('a screenshot is read and its readings offered as choices', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await ocrRead(page, 0, 'before', '9,950');
+  const chips = await page.$$eval('#capO-0-before .capchip', els => els.map(e => e.textContent.trim()));
+  ok(chips.some(c => /9,950/.test(c)), `expected 9,950 among the choices, got ${JSON.stringify(chips)}`);
+  await page.close();
+});
+
+test('nothing is filled in until a reading is tapped', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.selectOption('#capCount', '1');
+  await ocrRead(page, 0, 'before', '9,950');
+  eq(await page.$eval('#capB-0-before', e => e.value), '', 'the field is still empty after reading');
+  eq(await page.evaluate(() => CAP.heads[0].before.btuh), '', 'and so is the state');
+
+  await page.click('#capO-0-before .capchip');
+  eq(await page.$eval('#capB-0-before', e => e.value), '9950', 'tapping fills it');
+  eq(await page.evaluate(() => CAP.heads[0].before.btuhSource), 'ocr', 'and records where it came from');
+  ok(/Check it against the probe/.test(await page.$eval('#capO-0-before', e => e.textContent)),
+    'and asks for it to be checked');
+  await page.close();
+});
+
+test('the screenshot itself is never kept or printed', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await ocrRead(page, 0, 'after', '9,950');
+  await page.click('#capO-0-after .capchip');
+  eq(await page.$eval('#ocrFile', e => e.files.length), 0, 'the file input is cleared');
+  eq(await page.evaluate(() => JSON.stringify(CAP).length < 20000), true, 'no image data held in state');
+  await page.click('#gen');
+  eq(await page.$$eval('#sheet img', els => els.filter(e => !e.className.includes('logo')).length), 0,
+    'and no screenshot reaches the report');
+  await page.close();
+});
+
+test('candidate readings are filtered to plausible capacities', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const picked = await page.evaluate(() => btuCandidates(
+    'Mode 3 Serial 12 Capacity 9,950 BTU/h Return 68.4 F 41 %rH Airflow 663 CFM Runtime 999999'
+  ).map(c => [c.value, c.labelled]));
+  const values = picked.map(p => p[0]);
+  ok(values.includes(9950), 'the capacity figure is offered');
+  ok(!values.includes(3) && !values.includes(12) && !values.includes(999999),
+    `out-of-range numbers are dropped, got ${JSON.stringify(values)}`);
+  eq(picked[0], [9950, true], 'the one labelled BTU comes first');
+  await page.close();
+});
+
+test('an unreadable engine says so and leaves the field typeable', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await page.route('**/vendor/tesseract/**', r => r.abort('failed'));
+  await page.selectOption('#capCount', '1');
+  await ocrRead(page, 0, 'before', '9,950');
+  const msg = await page.$eval('#capO-0-before', e => e.textContent);
+  ok(/type the value in/i.test(msg), `expected a fallback message, got "${msg}"`);
+  await page.fill('#capB-0-before', '9950');
+  eq(await page.evaluate(() => CAP.heads[0].before.btuh), '9950', 'typing still works');
+  await page.close();
+});
+
+test('the read button opens a picker rather than doing nothing', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null),
+    page.click('[data-ocr="0:before"]'),
+  ]);
+  ok(chooser, 'the button must actually open the file picker');
   await page.close();
 });
 

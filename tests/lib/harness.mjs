@@ -13,6 +13,7 @@ const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.png': 'image/png',
   '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown',
+  '.wasm': 'application/wasm', '.gz': 'application/gzip',
 };
 
 /**
@@ -282,6 +283,34 @@ export async function pageTexts(buffer) {
     out.push(c.items.map(o => o.str).join(' ').replace(/\s+/g, ' ').trim());
   }
   return out;
+}
+
+/**
+ * Draw a stand-in Testo screen and push it through the real OCR path.
+ * Resolves once the panel shows either candidates or a failure message.
+ */
+export async function ocrRead(page, i, phase, value = '9,950', extra = 'Return 68.4 F  41 %rH') {
+  // The panel lives inside the head's body, so the head has to be expanded.
+  await page.evaluate(n => { if (CAP.open !== n) { CAP.open = n; renderHeads(); } }, i);
+  await page.evaluate(async ({ i, phase, value, extra }) => {
+    const c = document.createElement('canvas');
+    c.width = 640; c.height = 420;
+    const x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+    x.fillStyle = '#111';
+    x.font = 'bold 84px Arial'; x.fillText(value, 40, 190);
+    x.font = 'bold 40px Arial'; x.fillText('BTU/h', 400, 190);
+    x.font = '30px Arial'; x.fillText(extra, 40, 290);
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], 'testo.png', { type: 'image/png' }));
+    OCR.target = { i, phase };
+    const inp = document.getElementById('ocrFile');
+    inp.files = dt.files;
+    inp.dispatchEvent(new Event('change', { bubbles: true }));
+  }, { i, phase, value, extra });
+  await page.waitForSelector(`#capO-${i}-${phase} .capocrpick, #capO-${i}-${phase} .capocrmsg.bad`,
+    { timeout: 90000 });
 }
 
 /** Page count of a rendered PDF buffer, read with pdf.js in node. */
