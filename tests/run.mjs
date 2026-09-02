@@ -1572,6 +1572,110 @@ test('the rated comparison carries its diversity caveat', async ({ browser, orig
   await page.close();
 });
 
+/* The two write-ups answer different questions — one about change over time,
+   one about performance against the manufacturer's figure — so neither may
+   restate the other, and neither repeats the technical caveat under the rated
+   table. */
+
+const benBlocks = page => page.$$eval('.capben', els => els.map(e => ({
+  cls: e.className,
+  head: e.querySelector('h4').textContent,
+  body: e.querySelector('p').textContent,
+})));
+
+test('the verification line covers any service, not just maintenance', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const verify = await page.$eval('#sheet .verify', e => e.textContent);
+  ok(/before and after the service was performed by/.test(verify), `got "${verify}"`);
+  ok(!/the maintenance performed by/.test(verify), 'the narrower wording is gone');
+  await page.close();
+});
+
+test('a capacity gain is explained in terms the customer can use', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const [cap, rated] = await benBlocks(page);
+  ok(/\bg\b/.test(cap.cls) && /delivering more than it was/.test(cap.head), 'the gain is named');
+  ok(/21,400 to 24,600 BTU\/h/.test(cap.body), 'with the real figures');
+  ok(/not from making the equipment any bigger/.test(cap.body),
+    'and says honestly where the gain came from');
+  ok(/manufacturer/.test(rated.head), 'the rated block is about the manufacturer figure');
+  await page.close();
+});
+
+test('an unchanged system is framed honestly, without inventing a gain', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, {
+    heads: [{location: 'Den', before: {btuh: '8000', returnTemp: '68', supplyTemp: '104'},
+                              after:  {btuh: '8000', returnTemp: '68', supplyTemp: '104'}}],
+    outdoor: {rated: '8000', ratedTemp: '35'},
+  });
+  await page.click('#gen');
+  const [cap] = await benBlocks(page);
+  ok(/\bn\b/.test(cap.cls) && /holding its output/.test(cap.head), 'steady, not improved');
+  ok(/came back exactly where it started/.test(cap.body), 'reads properly at exactly zero');
+  ok(/confirmed the output rather than having to recover it/.test(cap.body),
+    'the value is the verification');
+  ok(!/rose|improved|more than it was/.test(cap.body), 'no gain is claimed');
+  await page.close();
+});
+
+test('a capacity loss gets a write-up that points somewhere useful', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, {
+    heads: [{location: 'Den', before: {btuh: '9000', returnTemp: '68', supplyTemp: '104'},
+                              after:  {btuh: '7000', returnTemp: '68', supplyTemp: '96'}}],
+    outdoor: {rated: '9000', ratedTemp: '35'},
+  });
+  await page.click('#gen');
+  const [cap] = await benBlocks(page);
+  ok(/\bb\b/.test(cap.cls) && /down on the last measurement/.test(cap.head), 'the drop is stated');
+  ok(/charge, airflow and heat transfer/.test(cap.body), 'and points at what to check');
+  await page.close();
+});
+
+test('the two write-ups say different things', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const blocks = await benBlocks(page);
+  eq(blocks.length, 2, 'both blocks render');
+  ok(blocks[0].head !== blocks[1].head, 'different headings');
+  const sentences = b => new Set(b.body.split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean));
+  const shared = [...sentences(blocks[0])].filter(x => sentences(blocks[1]).has(x));
+  eq(shared, [], 'no sentence appears in both');
+  // Nor should either simply restate the caveat under the rated table.
+  const caveat = await page.$$eval('.capnote', els => els.map(e => e.textContent).join(' '));
+  for (const b of blocks) {
+    const dup = [...sentences(b)].filter(x => caveat.includes(x));
+    eq(dup, [], `the ${b.head} block repeats the caveat verbatim`);
+  }
+  await page.close();
+});
+
+test('without a rated figure there is nothing to compare, and no block', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, {
+    heads: [{location: 'Den', before: {btuh: '8000'}, after: {btuh: '9000'}}],
+    outdoor: {ratedTemp: '35'},
+  });
+  await page.click('#gen');
+  const blocks = await benBlocks(page);
+  eq(blocks.length, 1, 'only the capacity block');
+  ok(/delivering more than it was/.test(blocks[0].head), 'and it is the right one');
+  await page.close();
+});
+
+test('the write-ups carry through to a combination report', async ({ browser, origin }) => {
+  const page = await combinationPage(browser, origin);
+  await page.click('#gen');
+  const heads = await page.$$eval('#sheet .sh', els => els.map(e => e.textContent));
+  eq(heads.filter(h => h === 'What This Means For Your Home').length, 2,
+    'one set of write-ups for airflow, one for capacity');
+  ok((await benBlocks(page)).length === 2, 'the capacity pair is there');
+  await page.close();
+});
+
 test('multiple before and after photos render as labelled galleries', async ({ browser, origin }) => {
   const page = await capPage(browser, origin);
   await addCapacityPhotos(page, 'before', 3);

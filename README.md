@@ -137,6 +137,29 @@ pointing at the directory: given a directory, Tesseract feature-detects and
 requests whichever variant the device prefers, which would mean vendoring every
 one of them. SIMD has been universal in Chrome since 2021.
 
+### What This Means For Your Home (capacity)
+
+Two write-ups, mirroring the airflow report, sitting between the rated table
+and the operating conditions:
+
+- **System Capacity** — what the before/after change means. Three variants:
+  delivered more, held its output, or dropped. The gain copy says plainly that
+  maintenance restores heat transfer rather than making the equipment bigger.
+- **Measured vs Rated** — a different question: whether the equipment is
+  producing what the manufacturer says it should at the conditions on the day.
+  Below rated is explained as the ordinary picture on a multi-zone system and
+  points the reader back to the before/after change as the verdict on the visit.
+
+They must stay distinct. A test asserts no sentence appears in both blocks, and
+that neither restates the technical caveat under the rated table verbatim —
+saying the same thing three times is how a report stops being read.
+
+Copy is mode-aware where it matters: "heat the system is pulling out of the
+house" in cooling, "putting into the house" in heating.
+
+These add roughly a page. A single-head capacity report is now two pages rather
+than one; five heads with photographs is four.
+
 ### Honesty rules in the capacity report
 
 - A change inside ±2% reads as **holding steady**, not as a win. Routine

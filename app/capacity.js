@@ -292,6 +292,67 @@ function conditionsPanel(phase){
 /** Before down the left, after down the right — the same reading order the
     rest of the report uses. Columns are pinned so one empty side cannot slide
     the other across. */
+/* What the two headline figures mean for the person paying for the work.
+   They answer deliberately different questions — one is about change over
+   time, the other about performance against the manufacturer's number — so
+   neither restates the other, and neither repeats the technical caveat that
+   sits under the rated table. */
+
+const heatFlow = () =>
+  CAP.mode === 'cooling' ? 'heat the system is pulling out of the house'
+  : CAP.mode === 'heating' ? 'heat the system is putting into the house'
+  : 'capacity the system is delivering';
+
+function capacityBenefits(tb, ta, sys, rated, vs){
+  const blocks = [];
+  const n = CAP.heads.length;
+  const units = `${n} indoor unit${n === 1 ? '' : 's'}`;
+  const atTemp = CAP.outdoor.ratedTemp ? ` at ${CAP.outdoor.ratedTemp}°F` : '';
+
+  if (sys.arrow && sys.pct != null){
+    let head, body;
+    if (sys.cls === 'g'){
+      head = 'The system is delivering more than it was';
+      body = `Measured output rose ${capPct(sys.pct)}, from ${btu(tb)} to ${btu(ta)} BTU/h across ${units}. That figure is ${heatFlow()} hour by hour — measured at the equipment, not read off a label. More of it means the house comes up to temperature sooner and the system runs for less of the day to hold it there. Gains like this come from restoring heat transfer that had drifted out, not from making the equipment any bigger.`;
+    } else if (sys.cls === 'n'){
+      head = 'The system is holding its output';
+      const held = Math.abs(sys.pct) < 0.05
+        ? 'came back exactly where it started'
+        : `came back within ${capPct(sys.pct)} of where it started`;
+      body = `Measured output ${held}, ${btu(tb)} to ${btu(ta)} BTU/h. That is a real result rather than an empty one: capacity slips away quietly as coils load up and airflow drifts, and equipment that measures the same after a season of running has not been losing ground. This service confirmed the output rather than having to recover it.`;
+    } else {
+      head = 'Output is down on the last measurement';
+      body = `Measured output fell ${capPct(sys.pct)}, from ${btu(tb)} to ${btu(ta)} BTU/h. Delivered capacity is the end product of charge, airflow and heat transfer, so a drop points at one of those rather than at worn-out equipment — and it is worth finding before the season leans on the system.`;
+    }
+    blocks.push({cls: sys.cls, label: 'System Capacity', delta: `${sys.arrow} ${capPct(sys.pct)}`, head, body});
+  }
+
+  if (vs.arrow && rated != null && ta != null){
+    const isAt = vs.cls === 'g';
+    blocks.push({
+      cls: vs.cls,
+      label: 'Measured vs Rated',
+      delta: `${vs.arrow} ${capPct(vs.pct)}`,
+      head: isAt ? "It is performing to the manufacturer's own numbers"
+                 : 'Reading the comparison against rated',
+      body: isAt
+        ? `The indoor units together measured ${btu(ta)} BTU/h against a rated ${btu(rated)} BTU/h${atTemp}. Meeting the published figure in the field is the part that cannot be assumed — it says the charge is right, the air is moving as it should, and the equipment is producing what it was specified to produce. You are getting the capacity you bought.`
+        : `The indoor units together measured ${btu(ta)} BTU/h against a rated ${btu(rated)} BTU/h${atTemp}. A rating describes every head running flat out at the same moment, which is not how a house actually calls for heating or cooling, so a measured total underneath it is the ordinary picture on a multi-zone system. The figure that judges this visit is the before-and-after change above.`,
+    });
+  }
+
+  if (!blocks.length) return '';
+  return `
+  <section>
+    <div class="sh">What This Means For Your Home</div>
+    ${blocks.map(b => `<div class="capben ${b.cls}">
+      <div class="capbenl">${esc(b.label)}<span class="d">${b.delta}</span></div>
+      <h4>${esc(b.head)}</h4>
+      <p>${esc(b.body)}</p>
+    </div>`).join('')}
+  </section>`;
+}
+
 function capShots(){
   if (!CAP.photos.before.length && !CAP.photos.after.length) return '';
   // The heading is bound to the first photograph so a page break can never
@@ -358,6 +419,8 @@ function capacitySections(breakFirst){
     <div class="capnote">Rated capacity assumes the manufacturer's nominal indoor conditions. On a multi-zone system the rated figure allows for diversity — heads rarely all run at full load at once — so this comparison is a sound field indicator, not a commissioning figure.</div>
   </section>
 
+  ${capacityBenefits(tb, ta, sys, rated, vs)}
+
   <section>
     <div class="sh">Operating Conditions</div>
     <div class="captwo">${conditionsPanel('before')}${conditionsPanel('after')}</div>
@@ -372,7 +435,7 @@ function capacityShell(){
   const modeLabel = CAP.mode ? CAP.mode[0].toUpperCase() + CAP.mode.slice(1) : '';
   return reportShell({
     title: 'System Capacity Report',
-    verify: 'Delivered heating and cooling capacity was measured with Testo Smart Probes at the return and supply of each indoor unit, before and after the maintenance performed by Homestar HVAC Solutions.',
+    verify: 'Delivered heating and cooling capacity was measured with Testo Smart Probes at the return and supply of each indoor unit, before and after the service was performed by Homestar HVAC Solutions.',
     meta: [
       {l: 'Date', v: new Date().toISOString().slice(0, 10)},
       {l: 'Mode', v: modeLabel},
