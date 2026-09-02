@@ -252,7 +252,7 @@ function headRow(h, i){
   const b = capNum(h.before.btuh), a = capNum(h.after.btuh);
   const st = capStatus(b, a);
   const max = Math.max(b || 0, a || 0) || 1;
-  const ident = [h.unitType, h.model, h.serial && `S/N ${h.serial}`].filter(Boolean);
+  const ident = [h.unitType, h.model && `M/N ${h.model}`, h.serial && `S/N ${h.serial}`].filter(Boolean);
   return `<div class="capcard">
     <div class="capcardh">
       <div class="capcardn">${esc(headName(h) || `Indoor Unit ${i + 1}`)}</div>
@@ -294,10 +294,16 @@ function conditionsPanel(phase){
     the other across. */
 function capShots(){
   if (!CAP.photos.before.length && !CAP.photos.after.length) return '';
+  // The heading is bound to the first photograph so a page break can never
+  // strand it: if the pair does not fit, both move to the next page together.
+  const frame = (src, label) => `<div class="capshot"><img src="${src}" alt="${label}"></div>`;
   const col = (list, label, cls) => !list.length ? '' : `
     <div class="capcol ${cls}">
-      <div class="capgt">${label}</div>
-      ${list.map(src => `<div class="capshot"><img src="${src}" alt="${label}"></div>`).join('')}
+      <div class="capgrp">
+        <div class="capgt">${label}</div>
+        ${frame(list[0], label)}
+      </div>
+      ${list.slice(1).map(src => frame(src, label)).join('')}
     </div>`;
   return `<section><div class="sh">Before &amp; After</div>
     <div class="capcols">${col(CAP.photos.before, 'Before', 'before')}${col(CAP.photos.after, 'After', 'after')}</div>

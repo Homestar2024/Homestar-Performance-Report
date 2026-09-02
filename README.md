@@ -58,7 +58,8 @@ Client name, address and technician are shared by all three.
 Up to five indoor units, entered one at a time in an accordion so a five-head
 system does not become an endless scroll. Each head takes an area, unit type,
 model, serial and a before/after BTU/h reading — the report prints the area as
-a heading with unit type, model and serial on their own lines beneath it; supporting readings (return and supply temp/RH, airflow) sit behind a
+a heading with unit type, `M/N` model and `S/N` serial on their own lines
+beneath it; supporting readings (return and supply temp/RH, airflow) sit behind a
 disclosure and feed the operating conditions section, and are filled in by
 reading a screenshot.
 
@@ -77,7 +78,11 @@ Either way the technician can override it, and once they do, detection stops
 arguing.
 
 Photographs: multiple before down the left column, multiple after down the
-right, since a job can have several indoor units plus the outdoor unit.
+right, since a job can have several indoor units plus the outdoor unit. Each
+caption is bound to its first photograph in a `break-inside: avoid` group, so a
+page break can never leave "Before" on one page and the photographs on the
+next — a test renders the PDF, counts images per page and asserts every page
+carrying photographs also carries both captions.
 
 ### Reading a Testo screenshot
 

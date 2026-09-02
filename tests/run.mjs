@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, pickReport, setCapacity, addCapacityPhotos, pageTexts, ocrRead, ROOT } from './lib/harness.mjs';
+import { test, eq, ok, run, serve, launch, openApp, upload, pageCount, attachPhoto, attachBadPhoto, dataUrlSize, swReady, cachedPaths, pollEval, pickReport, setCapacity, addCapacityPhotos, pageTexts, pageImages, ocrRead, ROOT } from './lib/harness.mjs';
 import { trueFlowPdf, unrelatedPdf, BEFORE, AFTER } from './lib/make-pdf.mjs';
 
 const LETTER = { format: 'Letter', printBackground: true, margin: { top: '0.5in', right: '0.5in', bottom: '0.5in', left: '0.5in' } };
@@ -1558,7 +1558,7 @@ test('each indoor unit lists its type, model and serial on their own lines', asy
     lines: [...e.querySelectorAll('.capcardi')].map(x => x.textContent.trim()),
   }));
   eq(card.name, 'Living Room', 'area is the heading');
-  eq(card.lines, ['Wall mount', 'MSZ-FS15NA', 'S/N A1122'], 'three lines beneath it');
+  eq(card.lines, ['Wall mount', 'M/N MSZ-FS15NA', 'S/N A1122'], 'three lines beneath it, labelled consistently');
   await page.close();
 });
 
@@ -1656,6 +1656,47 @@ test('the capacity report prints without cutting a unit across a page', async ({
     const whole = pages.filter(t => t.includes(name) && t.includes(b) && t.includes(a));
     eq(whole.length, 1, `${name} should sit whole on one page (found on ${whole.length})`);
   }
+  await page.close();
+});
+
+/* A caption stranded on the page before its photographs leaves the reader
+   guessing which set is which. The caption is bound to its first photo, so the
+   pair moves together. Checked against real pagination: every page carrying
+   photographs must also carry the caption for them. */
+test('photo captions travel to the page the photos land on', async ({ browser, origin }) => {
+  const page = await openApp(browser, origin, { reportType: 'capacity' });
+  await setCapacity(page, {
+    heads: [1, 2, 3, 4, 5].map(n => ({
+      location: ['Living Room','Kitchen','Master Bedroom','Office','Basement'][n - 1],
+      unitType: 'Wall mount', model: `MSZ-TEST${n}`, serial: `SN${n}0000`,
+      before: {btuh: String(5000 + n * 400), returnTemp: '68', supplyTemp: '104'},
+      after:  {btuh: String(5800 + n * 400), returnTemp: '68', supplyTemp: '110'},
+    })),
+    outdoor: {model: 'MXZ-5C42NAHZ', rated: '36000', ratedTemp: '35'},
+  });
+  await addCapacityPhotos(page, 'before', 3);
+  await addCapacityPhotos(page, 'after', 3);
+  await page.click('#gen');
+
+  const pdf = await page.pdf(LETTER);
+  const [texts, images] = await Promise.all([pageTexts(pdf), pageImages(pdf)]);
+
+  // Page one carries the logo; photographs start after it.
+  const photoPages = images.map((n, i) => [i, n]).filter(([i, n]) => i > 0 && n > 0).map(([i]) => i);
+  ok(photoPages.length > 0, `the photographs should print, images per page: ${images}`);
+  for (const i of photoPages) {
+    ok(/BEFORE/i.test(texts[i]) && /AFTER/i.test(texts[i]),
+      `page ${i + 1} holds photographs but not both captions — that is the stranding this guards against`);
+  }
+  await page.close();
+});
+
+test('the model number is labelled the same way the serial is', async ({ browser, origin }) => {
+  const page = await capPage(browser, origin);
+  await page.click('#gen');
+  const lines = await page.$$eval('.capcard .capcardi', els => els.map(e => e.textContent.trim()));
+  ok(lines.includes('M/N MSZ-FS15NA'), `expected an M/N line, got ${JSON.stringify(lines.slice(0, 3))}`);
+  ok(lines.includes('S/N A1122'), 'alongside the S/N line');
   await page.close();
 });
 

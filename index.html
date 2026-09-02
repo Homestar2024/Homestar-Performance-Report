@@ -279,8 +279,10 @@
          padding:8px 14px; border-radius:8px 8px 0 0}
   .capcol.before .capgt{background:var(--slate)}
   .capcol.after .capgt{background:var(--blue)}
+  .capgrp{break-inside:avoid; page-break-inside:avoid}
   .capshot{border:1px solid var(--line); border-top:0; overflow:hidden}
-  .capcol .capshot:last-child{border-radius:0 0 10px 10px}
+  .capcol > .capshot:last-child,
+  .capgrp:last-child > .capshot:last-child{border-radius:0 0 10px 10px}
   .capshot img{display:block; width:100%; height:210px; object-fit:contain; background:#F4F6F8}
 
   /* ---------- Report ---------- */
@@ -487,7 +489,7 @@
     .capgt{font-size:10px; padding:5px 13px}
     .capshot img{height:196px}
     /* Nothing in the capacity report may be cut across a page break. */
-    .capcard,.capcell,.caprow,.capvs,.cappanel,.capshot,.caphero{break-inside:avoid; page-break-inside:avoid}
+    .capcard,.capcell,.caprow,.capvs,.cappanel,.capshot,.capgrp,.caphero{break-inside:avoid; page-break-inside:avoid}
     .sh{break-after:avoid; page-break-after:avoid}
   }
 </style>

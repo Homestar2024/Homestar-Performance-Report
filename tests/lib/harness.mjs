@@ -313,6 +313,25 @@ export async function ocrRead(page, i, phase, value = '9,950', extra = 'Return 6
     { timeout: 90000 });
 }
 
+/**
+ * How many images each printed page carries, from the paint operators of the
+ * real paginated PDF. Page text alone cannot tell you where a photograph
+ * landed, which is what a stranded caption is about.
+ */
+export async function pageImages(buffer) {
+  const pdfjs = nodePdfjs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buffer), verbosity: 0 }).promise;
+  const paints = new Set([pdfjs.OPS.paintImageXObject, pdfjs.OPS.paintInlineImageXObject,
+                          pdfjs.OPS.paintImageMaskXObject, pdfjs.OPS.paintJpegXObject]
+                         .filter(v => v !== undefined));
+  const out = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const ops = await (await doc.getPage(i)).getOperatorList();
+    out.push(ops.fnArray.filter(fn => paints.has(fn)).length);
+  }
+  return out;
+}
+
 /** Page count of a rendered PDF buffer, read with pdf.js in node. */
 export async function pageCount(buffer) {
   const pdfjs = nodePdfjs();
